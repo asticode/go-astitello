@@ -21,14 +21,19 @@ func main() {
 	d := astitello.New()
 
 	// Handle events
-	d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Info("main: drone has took off!") })
+	d.On(astitello.GoEvent, astitello.GoEventHandler(func(x, y, z, speed int) { astilog.Infof("main: go: %d %d %d %d", x, y, z, speed) }))
 
 	// Connect drone
 	if err := d.Connect(); err != nil {
-		astilog.Error(errors.Wrap(err, "main: connecting to drone failed"))
-		return
+		astilog.Fatal(errors.Wrap(err, "main: connecting to drone failed"))
 	}
 	defer d.Close()
+
+	// Make sure to stop
+	go func() {
+		// Wait for context to be done
+		<- w.Context().Done()
+	}()
 
 	// Take off
 	if err := d.TakeOff(); err != nil {
@@ -36,12 +41,20 @@ func main() {
 		return
 	}
 
-	// Wait
-	w.Wait()
+	// Make sure to land
+	defer func() {
+		if err := d.Land(); err != nil {
+			astilog.Error(errors.Wrap(err, "main: landing failed"))
+			return
+		}
+	}()
 
-	// Land
-	if err := d.Land(); err != nil {
-		astilog.Error(errors.Wrap(err, "main: landing failed"))
+	// Curve
+	if err := d.Curve(20, 20, 20, 40, 40, 20, 20); err != nil {
+		astilog.Error(errors.Wrap(err, "main: curving failed"))
 		return
 	}
+
+	// Wait
+	w.Wait()
 }
