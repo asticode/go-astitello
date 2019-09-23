@@ -139,10 +139,6 @@ type State struct {
 	Baro   float64 // The barometer measurement in cm
 	Bat    int     // The percentage of the current battery level
 	Height int     // The height in cm
-	Mid    int     // The ID of the Mission Pad detected
-	MpryX  int     // ?
-	MpryY  int     // ?
-	MpryZ  int     // ?
 	Pitch  int     // The degree of the attitude pitch
 	Roll   int     // The degree of the attitude roll
 	Temph  int     // The highest temperature in degree Celsius
@@ -152,19 +148,15 @@ type State struct {
 	VgX    int     // The speed of the "x" axis
 	VgY    int     // The speed of the "y" axis
 	VgZ    int     // The speed of the "z" axis
-	X      int     // The “x” coordinate detected on the Mission Pad
-	Y      int     // The “y” coordinate detected on the Mission Pad
 	Yaw    int     // The degree of the attitude yaw
-	Z      int     // The “z” coordinate detected on the Mission Pad
 }
 
-// Seems like there's a mix up in the state format: https://tellopilots.com/threads/tello-new-firmware-01-04-78-01-released.2678/
 func newState(i string) (s State, err error) {
 	var n int
-	if n, err = fmt.Sscanf(strings.TrimSpace(i), "mid:%d;x:%d;y:%d;z:%d;mpry:%d,%d,%d;pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Mid, &s.X, &s.Y, &s.Z, &s.MpryX, &s.MpryY, &s.MpryZ, &s.Pitch, &s.Roll, &s.Yaw, &s.VgX, &s.VgY, &s.VgZ, &s.Templ, &s.Temph, &s.Tof, &s.Height, &s.Bat, &s.Baro, &s.Time, &s.AgX, &s.AgY, &s.AgZ); err != nil {
+	if n, err = fmt.Sscanf(strings.TrimSpace(i), "pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Pitch, &s.Roll, &s.Yaw, &s.VgX, &s.VgY, &s.VgZ, &s.Templ, &s.Temph, &s.Tof, &s.Height, &s.Bat, &s.Baro, &s.Time, &s.AgX, &s.AgY, &s.AgZ); err != nil {
 		err = errors.Wrap(err, "astitello: scanf failed")
 		return
-	} else if n != 23 {
+	} else if n != 16 {
 		err = fmt.Errorf("astitello: scanf only parsed %d items, expected 10", n)
 		return
 	}
