@@ -452,7 +452,7 @@ func (d *Drone) Back(x int) (err error) {
 }
 
 // x is in degree
-func (d *Drone) Clockwise(x int) (err error) {
+func (d *Drone) RotateClockwise(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("cw %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending cw cmd failed")
@@ -462,7 +462,7 @@ func (d *Drone) Clockwise(x int) (err error) {
 }
 
 // x is in degree
-func (d *Drone) CounterClockwise(x int) (err error) {
+func (d *Drone) RotateCounterClockwise(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("ccw %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending ccw cmd failed")
