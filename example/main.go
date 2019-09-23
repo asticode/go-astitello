@@ -3,19 +3,12 @@ package main
 import (
 	"github.com/asticode/go-astilog"
 	"github.com/asticode/go-astitello"
-	astiworker "github.com/asticode/go-astitools/worker"
 	"github.com/pkg/errors"
 )
 
 func main() {
 	// Set logger
 	astilog.SetDefaultLogger()
-
-	// Create worker
-	w := astiworker.NewWorker()
-
-	// Handle signals
-	w.HandleSignals()
 
 	// Create drone
 	d := astitello.New()
@@ -43,14 +36,12 @@ func main() {
 		}
 	}()
 
-	// Get temp
-	x, err := d.Wifi()
-	if err != nil {
-		astilog.Error(errors.Wrap(err, "main: getting wifi failed"))
+	// Flip
+	if err := d.Flip(astitello.FlipRight); err != nil {
+		astilog.Error(errors.Wrap(err, "main: flipping failed"))
 		return
 	}
-	astilog.Warnf("wifi: %d", x)
 
-	// Wait
-	w.Wait()
+	// Log state
+	astilog.Infof("main: state is: %+v", d.State())
 }
