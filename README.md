@@ -1,3 +1,5 @@
+[![GoDoc](https://godoc.org/github.com/asticode/go-astitello?status.svg)](https://godoc.org/github.com/asticode/go-astitello)
+
 This is a Golang implementation of the DJI Tello SDK.
 
 Up-to-date SDK documentation can be downloaded [here](https://www.ryzerobotics.com/fr/tello/downloads).
@@ -32,7 +34,7 @@ $ go run example/main.go
 
 WARNING1: the code below doesn't handle errors for readibility purposes. However you SHOULD!
 
-WARNING2: the code below doesn't list all available methods but be sure to check them all out!
+WARNING2: the code below doesn't list all available methods, be sure to check the [doc](https://godoc.org/github.com/asticode/go-astitello)!
 
 ```go
 // For now you need to set this logger
