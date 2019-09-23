@@ -1,10 +1,11 @@
 package astitello
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
-	"strings"
+	"strconv"
 	"sync"
 
 	"github.com/asticode/go-astilog"
@@ -14,21 +15,9 @@ import (
 
 // Events
 const (
-	BackEvent             = "back"
-	ClockwiseEvent        = "clockwise"
-	CommandEvent          = "command"
-	CounterClockwiseEvent = "counter.clockwise"
-	CurveEvent            = "curve"
-	DownEvent             = "down"
-	FlipEvent             = "flip"
-	ForwardEvent          = "forward"
-	GoEvent               = "go"
-	LandEvent             = "land"
-	LeftEvent             = "left"
-	RightEvent            = "right"
-	StateEvent            = "state"
-	TakeOffEvent          = "take.off"
-	UpEvent               = "up"
+	LandEvent    = "land"
+	StateEvent   = "state"
+	TakeOffEvent = "take.off"
 )
 
 // Flips
@@ -39,13 +28,6 @@ const (
 	FlipRight   = "r"
 )
 
-var validFlips = map[string]bool{
-	FlipBack:    true,
-	FlipForward: true,
-	FlipLeft:    true,
-	FlipRight:   true,
-}
-
 var ErrNotConnected = errors.New("astitello: not connected")
 
 type Drone struct {
@@ -55,9 +37,11 @@ type Drone struct {
 	d         *astievent.Dispatcher
 	lr        string
 	mc        *sync.Mutex // Locks sendCmd
+	ms        *sync.Mutex // Locks s
 	ol        *sync.Once  // Limits Close()
 	oo        *sync.Once  // Limits Connect()
 	rc        *sync.Cond
+	s         *State
 	stateConn *net.UDPConn
 }
 
@@ -65,17 +49,25 @@ func New() *Drone {
 	return &Drone{
 		d:  astievent.NewDispatcher(),
 		mc: &sync.Mutex{},
+		ms: &sync.Mutex{},
 		ol: &sync.Once{},
 		oo: &sync.Once{},
 		rc: sync.NewCond(&sync.Mutex{}),
+		s:  &State{},
 	}
+}
+
+func (d *Drone) State() State {
+	d.ms.Lock()
+	defer d.ms.Unlock()
+	return *d.s
 }
 
 func (d *Drone) On(name string, h astievent.EventHandler) {
 	d.d.On(name, h)
 }
 
-func (d *Drone) Close() {
+func (d *Drone) Disconnect() {
 	// Make sure to execute this only once
 	d.ol.Do(func() {
 		// Cancel context
@@ -175,11 +167,16 @@ func (d *Drone) readState() {
 		}
 
 		// Create state
-		s, err := newState(string(b[:n]))
+		s, err := newState(string(bytes.TrimSpace(b[:n])))
 		if err != nil {
 			astilog.Error(errors.Wrap(err, "astitello: creating state failed"))
 			continue
 		}
+
+		// Update state
+		d.ms.Lock()
+		*d.s = s
+		d.ms.Unlock()
 
 		// Dispatch
 		d.d.Dispatch(StateEvent, s)
@@ -187,27 +184,39 @@ func (d *Drone) readState() {
 }
 
 type State struct {
-	AgX    float64 // The acceleration of the "x" axis
-	AgY    float64 // The acceleration of the "y" axis
-	AgZ    float64 // The acceleration of the "z" axis
-	Baro   float64 // The barometer measurement in cm
-	Bat    int     // The percentage of the current battery level
-	Height int     // The height in cm
-	Pitch  int     // The degree of the attitude pitch
-	Roll   int     // The degree of the attitude roll
-	Temph  int     // The highest temperature in degree Celsius
-	Templ  int     // The lowest temperature in degree Celsius
-	Time   int     // The amount of time the motor has been used
-	Tof    int     // The time of flight distance in cm
-	VgX    int     // The speed of the "x" axis
-	VgY    int     // The speed of the "y" axis
-	VgZ    int     // The speed of the "z" axis
-	Yaw    int     // The degree of the attitude yaw
+	Acceleration       CoordinateFloat64 // The acceleration
+	Attitude           Attitude          // The attitude
+	Barometer          float64           // The barometer measurement in cm
+	Battery            int               // The percentage of the current battery level
+	FlightDistance     int               // The time of flight distance in cm
+	FlightTime         int               // The amount of time the motor has been used
+	Height             int               // The height in cm
+	HighestTemperature int               // The highest temperature in degree Celsius
+	LowestTemperature  int               // The lowest temperature in degree Celsius
+	Speed              CoordinateInt     // The speed
+}
+
+type Attitude struct {
+	Pitch int // The degree of the attitude pitch
+	Roll  int // The degree of the attitude roll
+	Yaw   int // The degree of the attitude yaw
+}
+
+type CoordinateFloat64 struct {
+	X float64
+	Y float64
+	Z float64
+}
+
+type CoordinateInt struct {
+	X int
+	Y int
+	Z int
 }
 
 func newState(i string) (s State, err error) {
 	var n int
-	if n, err = fmt.Sscanf(strings.TrimSpace(i), "pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Pitch, &s.Roll, &s.Yaw, &s.VgX, &s.VgY, &s.VgZ, &s.Templ, &s.Temph, &s.Tof, &s.Height, &s.Bat, &s.Baro, &s.Time, &s.AgX, &s.AgY, &s.AgZ); err != nil {
+	if n, err = fmt.Sscanf(i, "pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Attitude.Pitch, &s.Attitude.Roll, &s.Attitude.Yaw, &s.Speed.X, &s.Speed.Y, &s.Speed.Z, &s.LowestTemperature, &s.HighestTemperature, &s.FlightDistance, &s.Height, &s.Battery, &s.Barometer, &s.FlightTime, &s.Acceleration.X, &s.Acceleration.Y, &s.Acceleration.Z); err != nil {
 		err = errors.Wrap(err, "astitello: scanf failed")
 		return
 	} else if n != 16 {
@@ -248,7 +257,7 @@ func (d *Drone) handleCmds() (err error) {
 	go d.readResponses()
 
 	// Send "command" cmd
-	if err = d.sendCmd("command", d.defaultRespHandler(CommandEvent, nil)); err != nil {
+	if err = d.sendCmd("command", defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
 		return
 	}
@@ -273,11 +282,12 @@ func (d *Drone) readResponses() {
 		}
 
 		// Log
-		astilog.Debugf("astitello: received resp '%s'", b[:n])
+		r := bytes.TrimSpace(b[:n])
+		astilog.Debugf("astitello: received resp '%s'", r)
 
 		// Signal
 		d.rc.L.Lock()
-		d.lr = string(b[:n])
+		d.lr = string(r)
 		d.rc.Signal()
 		d.rc.L.Unlock()
 	}
@@ -285,16 +295,24 @@ func (d *Drone) readResponses() {
 
 type respHandler func(resp string) error
 
-func (d *Drone) defaultRespHandler(name string, payload interface{}) respHandler {
+func defaultRespHandler(resp string) (err error) {
+	// Check response
+	if resp != "ok" {
+		err = errors.Wrap(errors.New(resp), "astitello: invalid response")
+		return
+	}
+	return
+}
+
+func (d *Drone) respHandlerWithEvent(name string) respHandler {
 	return func(resp string) (err error) {
-		// Check response
-		if resp != "ok" {
-			err = errors.Wrap(errors.New(resp), "astitello: invalid response")
+		// Default
+		if err = defaultRespHandler(resp); err != nil {
 			return
 		}
 
-		// Publish
-		d.d.Dispatch(name, payload)
+		// Dispatch
+		d.d.Dispatch(name, nil)
 		return
 	}
 }
@@ -357,7 +375,7 @@ func (d *Drone) Emergency() (err error) {
 
 func (d *Drone) TakeOff() (err error) {
 	// Send cmd
-	if err = d.sendCmd("takeoff", d.defaultRespHandler(TakeOffEvent, nil)); err != nil {
+	if err = d.sendCmd("takeoff", d.respHandlerWithEvent(TakeOffEvent)); err != nil {
 		err = errors.Wrap(err, "astitello: sending takeoff cmd failed")
 		return
 	}
@@ -366,7 +384,7 @@ func (d *Drone) TakeOff() (err error) {
 
 func (d *Drone) Land() (err error) {
 	// Send cmd
-	if err = d.sendCmd("land", d.defaultRespHandler(LandEvent, nil)); err != nil {
+	if err = d.sendCmd("land", d.respHandlerWithEvent(LandEvent)); err != nil {
 		err = errors.Wrap(err, "astitello: sending land cmd failed")
 		return
 	}
@@ -376,206 +394,182 @@ func (d *Drone) Land() (err error) {
 // x is in cm
 func (d *Drone) Up(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("up %d", x), d.defaultRespHandler(UpEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("up %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending up cmd failed")
 		return
 	}
 	return
 }
 
-func UpEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in cm
 func (d *Drone) Down(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("down %d", x), d.defaultRespHandler(DownEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("down %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending down cmd failed")
 		return
 	}
 	return
 }
 
-func DownEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in cm
 func (d *Drone) Left(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("left %d", x), d.defaultRespHandler(LeftEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("left %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending left cmd failed")
 		return
 	}
 	return
 }
 
-func LeftEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in cm
 func (d *Drone) Right(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("right %d", x), d.defaultRespHandler(RightEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("right %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending right cmd failed")
 		return
 	}
 	return
 }
 
-func RightEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in cm
 func (d *Drone) Forward(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("forward %d", x), d.defaultRespHandler(ForwardEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("forward %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending forward cmd failed")
 		return
 	}
 	return
 }
 
-func ForwardEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in cm
 func (d *Drone) Back(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("back %d", x), d.defaultRespHandler(BackEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("back %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending back cmd failed")
 		return
 	}
 	return
 }
 
-func BackEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in degree
 func (d *Drone) Clockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("cw %d", x), d.defaultRespHandler(ClockwiseEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("cw %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending cw cmd failed")
 		return
 	}
 	return
 }
 
-func ClockwiseEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is in degree
 func (d *Drone) CounterClockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("ccw %d", x), d.defaultRespHandler(CounterClockwiseEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("ccw %d", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending ccw cmd failed")
 		return
 	}
 	return
 }
 
-func CounterClockwiseEventHandler(f func(x int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(int))
-	}
-}
-
 // x is one of exported Flip types
 func (d *Drone) Flip(x string) (err error) {
-	// Check flip
-	if _, ok := validFlips[x]; !ok {
-		err = fmt.Errorf("astitello: invalid flip type '%s'", x)
-		return
-	}
-
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("flip %s", x), d.defaultRespHandler(FlipEvent, x)); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("flip %s", x), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending flip cmd failed")
 		return
 	}
 	return
 }
 
-func FlipEventHandler(f func(x string)) astievent.EventHandler {
-	return func(payload interface{}) {
-		f(payload.(string))
-	}
-}
-
 // x, y and z are in cm
 // speed is in cm/s
 func (d *Drone) Go(x, y, z, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("go %d %d %d %d", x, y, z, speed), d.defaultRespHandler(GoEvent, goEventPayload{
-		speed: speed,
-		x:     x,
-		y:     y,
-		z:     z,
-	})); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("go %d %d %d %d", x, y, z, speed), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending go cmd failed")
 		return
 	}
 	return
-}
-
-type goEventPayload struct {
-	speed, x, y, z int
-}
-
-func GoEventHandler(f func(x, y, z, speed int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		p := payload.(goEventPayload)
-		f(p.x, p.y, p.z, p.speed)
-	}
 }
 
 // x1, x2, y1, y2, z1 and z2 are in cm
 // speed is in cm/s
 func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed), d.defaultRespHandler(CurveEvent, curveEventPayload{
-		speed: speed,
-		x1:    x1,
-		x2:    x2,
-		y1:    y1,
-		y2:    y2,
-		z1:    z1,
-		z2:    z2,
-	})); err != nil {
+	if err = d.sendCmd(fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed), defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending go cmd failed")
 		return
 	}
 	return
 }
 
-type curveEventPayload struct {
-	speed, x1, y1, z1, x2, y2, z2 int
+// All values are between -100 and 100
+// lr: left/right
+// fb: forward/backward
+// ud: up/down
+// y: yawn
+// This cmd doesn't seem to be receiving any response
+func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
+	// Send cmd
+	if err = d.sendCmd(fmt.Sprintf("rc %d %d %d %d", lr, fb, ud, y), nil); err != nil {
+		err = errors.Wrap(err, "astitello: sending rc cmd failed")
+		return
+	}
+	return
 }
 
-func CurveEventHandler(f func(x1, y1, z1, x2, y2, z2, speed int)) astievent.EventHandler {
-	return func(payload interface{}) {
-		p := payload.(curveEventPayload)
-		f(p.x1, p.y1, p.z1, p.x2, p.y2, p.z2, p.speed)
+//!\\ I couldn't make this work (it returned 'error' even though the SSID was changed but the password was not)
+// If anyone manages to make it work, create an issue in github, I'm really interested in how you managed that :D
+func (d *Drone) SetWifi(ssid, password string) (err error) {
+	// Send cmd
+	if err = d.sendCmd(fmt.Sprintf("wifi %s %s", ssid, password), defaultRespHandler); err != nil {
+		err = errors.Wrap(err, "astitello: sending wifi cmd failed")
+		return
 	}
+	return
+}
+
+func (d *Drone) Wifi() (snr string, err error) {
+	// Send cmd
+	// It returns "100.0"
+	if err = d.sendCmd("wifi?", func(resp string) (err error) {
+		// Set snr
+		snr = resp
+		return
+	}); err != nil {
+		err = errors.Wrap(err, "astitello: sending wifi? cmd failed")
+		return
+	}
+	return
+}
+
+// x is in cm/s
+func (d *Drone) SetSpeed(x int) (err error) {
+	// Send cmd
+	if err = d.sendCmd(fmt.Sprintf("speed %d", x), defaultRespHandler); err != nil {
+		err = errors.Wrap(err, "astitello: sending speed cmd failed")
+		return
+	}
+	return
+}
+
+func (d *Drone) Speed() (x int, err error) {
+	// Send cmd
+	// It returns "100.0"
+	if err = d.sendCmd("speed?", func(resp string) (err error) {
+		// Parse
+		var f float64
+		if f, err = strconv.ParseFloat(resp, 64); err != nil {
+			err = errors.Wrapf(err, "astitello: parsing float %s failed", resp)
+			return
+		}
+
+		// Set speed
+		x = int(f)
+		return
+	}); err != nil {
+		err = errors.Wrap(err, "astitello: sending speed? cmd failed")
+		return
+	}
+	return
 }
