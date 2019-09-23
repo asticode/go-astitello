@@ -10,15 +10,15 @@ func main() {
 	// Set logger
 	astilog.SetDefaultLogger()
 
-	// Create drone
+	// Create the drone
 	d := astitello.New()
 
 	// Handle events
 	d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Warn("main: drone has took off!") })
 
-	// Connect drone
+	// Connect to the drone
 	if err := d.Connect(); err != nil {
-		astilog.Fatal(errors.Wrap(err, "main: connecting to drone failed"))
+		astilog.Fatal(errors.Wrap(err, "main: connecting to the drone failed"))
 	}
 	defer d.Disconnect()
 
