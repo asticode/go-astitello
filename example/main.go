@@ -4,6 +4,7 @@ import (
 	"github.com/asticode/go-astilog"
 	"github.com/asticode/go-astitello"
 	astiworker "github.com/asticode/go-astitools/worker"
+	"github.com/pkg/errors"
 )
 
 func main() {
@@ -19,23 +20,28 @@ func main() {
 	// Create drone
 	d := astitello.New()
 
-	d.On(astitello.StateEvent, astitello.StateEventHandler(func(s astitello.State) { astilog.Warnf("state: %+v", s) }))
+	// Handle events
+	d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Info("main: drone has took off!") })
 
-	// Create task
-	t := w.NewTask()
-	go func() {
-		// Make sure task is stopped
-		defer t.Done()
+	// Connect drone
+	if err := d.Connect(); err != nil {
+		astilog.Error(errors.Wrap(err, "main: connecting to drone failed"))
+		return
+	}
+	defer d.Close()
 
-		// Start drone
-		d.Start(w.Context())
-		defer d.Close()
-
-
-		// Wait for context to be done
-		<-w.Context().Done()
-	}()
+	// Take off
+	if err := d.TakeOff(); err != nil {
+		astilog.Error(errors.Wrap(err, "main: taking off failed"))
+		return
+	}
 
 	// Wait
 	w.Wait()
+
+	// Land
+	if err := d.Land(); err != nil {
+		astilog.Error(errors.Wrap(err, "main: landing failed"))
+		return
+	}
 }

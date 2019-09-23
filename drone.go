@@ -14,10 +14,13 @@ import (
 
 // Events
 const (
-	StateEvent = "state"
+	CommandEvent = "command"
+	LandEvent    = "land"
+	StateEvent   = "state"
+	TakeOffEvent = "take.off"
 )
 
-var ErrNotStarted = errors.New("astitello: not started")
+var ErrNotConnected = errors.New("astitello: not connected")
 
 type Drone struct {
 	cancel    context.CancelFunc
@@ -26,8 +29,8 @@ type Drone struct {
 	d         *astievent.Dispatcher
 	lr        string
 	mc        *sync.Mutex // Locks sendCmd
-	oc        *sync.Once
-	os        *sync.Once
+	ol        *sync.Once  // Limits Close()
+	oo        *sync.Once  // Limits Connect()
 	rc        *sync.Cond
 	stateConn *net.UDPConn
 }
@@ -36,8 +39,8 @@ func New() *Drone {
 	return &Drone{
 		d:  astievent.NewDispatcher(),
 		mc: &sync.Mutex{},
-		oc: &sync.Once{},
-		os: &sync.Once{},
+		ol: &sync.Once{},
+		oo: &sync.Once{},
 		rc: sync.NewCond(&sync.Mutex{}),
 	}
 }
@@ -46,17 +49,42 @@ func (d *Drone) On(name string, h astievent.EventHandler) {
 	d.d.On(name, h)
 }
 
-func (d *Drone) Start(ctx context.Context) (err error) {
+func (d *Drone) Close() {
 	// Make sure to execute this only once
-	d.os.Do(func() {
-		// Create context
-		d.ctx, d.cancel = context.WithCancel(ctx)
+	d.ol.Do(func() {
+		// Cancel context
+		if d.cancel != nil {
+			d.cancel()
+		}
 
 		// Reset once
-		d.oc = &sync.Once{}
+		d.oo = &sync.Once{}
+
+		// Stop and reset dispatcher
+		d.d.Stop()
+		d.d.Reset()
+
+		// Close connections
+		if d.cmdConn != nil {
+			d.cmdConn.Close()
+		}
+		if d.stateConn != nil {
+			d.stateConn.Close()
+		}
+	})
+}
+
+func (d *Drone) Connect() (err error) {
+	// Make sure to execute this only once
+	d.oo.Do(func() {
+		// Create context
+		d.ctx, d.cancel = context.WithCancel(context.Background())
+
+		// Reset once
+		d.ol = &sync.Once{}
 
 		// Start dispatcher
-		go d.d.Start(ctx)
+		go d.d.Start(d.ctx)
 
 		// Handle context
 		go func() {
@@ -179,7 +207,7 @@ func (d *Drone) handleCmds() (err error) {
 
 	// Create laddr
 	var laddr *net.UDPAddr
-	if laddr, err = net.ResolveUDPAddr("udp", ":"); err != nil {
+	if laddr, err = net.ResolveUDPAddr("udp", ":8889"); err != nil {
 		err = errors.Wrap(err, "astitello: creating laddr failed")
 		return
 	}
@@ -194,9 +222,7 @@ func (d *Drone) handleCmds() (err error) {
 	go d.readResponses()
 
 	// Send "command" cmd
-	// In this case we don't provide a handler since once the "command" cmd has already been sent, sending a new
-	// "command" cmd will result in no response at all
-	if err = d.sendCmd("command", nil); err != nil {
+	if err = d.sendCmd("command", d.defaultRespHandler(CommandEvent)); err != nil {
 		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
 		return
 	}
@@ -220,6 +246,9 @@ func (d *Drone) readResponses() {
 			continue
 		}
 
+		// Log
+		astilog.Debugf("astitello: received resp '%s'", b[:n])
+
 		// Signal
 		d.rc.L.Lock()
 		d.lr = string(b[:n])
@@ -230,13 +259,18 @@ func (d *Drone) readResponses() {
 
 type respHandler func(resp string) error
 
-func (d *Drone) defaultRespHandler(resp string) (err error) {
-	// Check response
-	if resp != "ok" {
-		err = fmt.Errorf("astitello: invalid response '%s'", resp)
+func (d *Drone) defaultRespHandler(name string) respHandler {
+	return func(resp string) (err error) {
+		// Check response
+		if resp != "ok" {
+			err = fmt.Errorf("astitello: invalid response '%s'", resp)
+			return
+		}
+
+		// Publish
+		d.d.Dispatch(name, nil)
 		return
 	}
-	return
 }
 
 func (d *Drone) sendCmd(cmd string, f respHandler) (err error) {
@@ -250,18 +284,16 @@ func (d *Drone) sendCmd(cmd string, f respHandler) (err error) {
 
 	// No connection
 	if d.cmdConn == nil {
-		err = ErrNotStarted
+		err = ErrNotConnected
 		return
 	}
+
+	// Log
+	astilog.Debugf("astitello: sending cmd '%s'", cmd)
 
 	// Write
 	if _, err = d.cmdConn.Write([]byte(cmd)); err != nil {
 		err = errors.Wrap(err, "astitello: writing failed")
-		return
-	}
-
-	// No handler
-	if f == nil {
 		return
 	}
 
@@ -282,27 +314,20 @@ func (d *Drone) sendCmd(cmd string, f respHandler) (err error) {
 	return
 }
 
-func (d *Drone) Close() {
-	// Make sure to execute this only once
-	d.oc.Do(func() {
-		// Cancel context
-		if d.cancel != nil {
-			d.cancel()
-		}
+func (d *Drone) TakeOff() (err error) {
+	// Send cmd
+	if err = d.sendCmd("takeoff", d.defaultRespHandler(TakeOffEvent)); err != nil {
+		err = errors.Wrap(err, "astitello: sending takeoff cmd failed")
+		return
+	}
+	return
+}
 
-		// Reset once
-		d.os = &sync.Once{}
-
-		// Stop and reset dispatcher
-		d.d.Stop()
-		d.d.Reset()
-
-		// Close connections
-		if d.cmdConn != nil {
-			d.cmdConn.Close()
-		}
-		if d.stateConn != nil {
-			d.stateConn.Close()
-		}
-	})
+func (d *Drone) Land() (err error) {
+	// Send cmd
+	if err = d.sendCmd("land", d.defaultRespHandler(LandEvent)); err != nil {
+		err = errors.Wrap(err, "astitello: sending land cmd failed")
+		return
+	}
+	return
 }
