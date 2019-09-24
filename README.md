@@ -15,6 +15,14 @@ Tello is a registered trademark of Ryze Tech. The author of this package is in n
 
 Use this package at your own risk. The author(s) is/are in no way responsible for any damage caused either to or by the drone when using this software.
 
+# Install the project
+
+Run the following command:
+
+```
+$ go get -u github.com/asticode/go-astitello/...
+```
+
 # Run the example
 
 IMPORTANT: the drone will make a flip to its right during this example, make sure you have enough space around the drone!
@@ -37,7 +45,9 @@ $ go run example/main.go
 
 WARNING1: the code below doesn't handle errors for readibility purposes. However you SHOULD!
 
-WARNING2: the code below doesn't list all available methods, be sure to check the [doc](https://godoc.org/github.com/asticode/go-astitello)!
+WARNING2: the code below doesn't list all available methods, be sure to check out the [doc](https://godoc.org/github.com/asticode/go-astitello)!
+
+## Set up the drone
 
 ```go
 // For now you need to set this logger
@@ -46,14 +56,18 @@ astilog.SetDefaultLogger()
 // Create the drone
 d := astitello.New()
 
-// Handle events
-d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Info("drone has took off!") })
-
 // Connect to the drone
 d.Connect()
 
 // Make sure to disconnect once everything is over
 defer d.Disconnect()
+```
+
+## Basic commands
+
+```go
+// Handle take off event
+d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Info("drone has took off!") })
 
 // Take off
 d.TakeOff()
@@ -71,9 +85,20 @@ d.SetSticks(-20, 10, -30, 40)
 d.Land()
 ```
 
-# Video
+## Video
 
-TODO
+```go
+// Handle new video packet
+d.On(astitello.VideoPacketEvent, astitello.VideoPacketEventHandler(func(p []byte) {
+    astilog.Infof("video packet length: %d", len(p))
+}))
+
+// Start video
+d.StartVideo()
+
+// Make sure to stop video
+defer d.StopVideo()
+```
 
 # Why this library?
 
