@@ -13,6 +13,7 @@ import (
 	"reflect"
 
 	"github.com/pkg/errors"
+	"bytes"
 )
 
 var (
@@ -113,7 +114,7 @@ func (d *dialer) close() {
 	}
 }
 
-func setup(t *testing.T) (d *Drone, c *dialer, s *dialer, err error) {
+func setup(t *testing.T) (d *Drone, c, s, v *dialer, err error) {
 	// Create cmd dialer
 	c = newDialer(t, "127.0.0.1:", respAddr)
 
@@ -125,7 +126,7 @@ func setup(t *testing.T) (d *Drone, c *dialer, s *dialer, err error) {
 		// Switch on command
 		switch string(cmd) {
 		case "command", "takeoff", "land", "up 1", "down 1", "left 1", "right 1", "forward 1", "back 1", "cw 1",
-			"ccw 1", "flip l", "go 1 2 3 4", "curve 1 2 3 4 5 6 7", "wifi 1 2", "speed 1":
+			"ccw 1", "flip l", "go 1 2 3 4", "curve 1 2 3 4 5 6 7", "wifi 1 2", "speed 1", "streamon", "streamoff":
 			resp = []byte("ok")
 		case "speed?":
 			resp = []byte("100.0")
@@ -150,6 +151,15 @@ func setup(t *testing.T) (d *Drone, c *dialer, s *dialer, err error) {
 		return
 	}
 
+	// Create video dialer
+	v = newDialer(t, "127.0.0.1:", videoAddr)
+
+	// Start video dialer
+	if err = v.start(); err != nil {
+		err = errors.Wrap(err, "test: starting video dialer failed")
+		return
+	}
+
 	// Update defaults
 	cmdAddr = c.conn.LocalAddr().String()
 
@@ -160,7 +170,7 @@ func setup(t *testing.T) (d *Drone, c *dialer, s *dialer, err error) {
 
 func TestDrone(t *testing.T) {
 	// Set up
-	d, c, s, err := setup(t)
+	d, c, s, v, err := setup(t)
 	if err != nil {
 		t.Error(errors.Wrap(err, "test: setting up failed"))
 	}
@@ -202,6 +212,8 @@ func TestDrone(t *testing.T) {
 		func() error { return d.SetSticks(1, 2, 3, 4) },
 		func() error { return d.SetWifi("1", "2") },
 		func() error { return d.SetSpeed(1) },
+		func() error { return d.StartVideo() },
+		func() error { return d.StopVideo() },
 	} {
 		if err = f(); err != nil {
 			t.Error(errors.Wrapf(err, "err %d should be nil", idx))
@@ -227,13 +239,13 @@ func TestDrone(t *testing.T) {
 	// Cmds
 	e := []string{"command", "emergency", "takeoff", "land", "up 1", "down 1", "left 1", "right 1", "forward 1",
 		"back 1", "cw 1", "ccw 1", "flip l", "go 1 2 3 4", "curve 1 2 3 4 5 6 7", "rc 1 2 3 4", "wifi 1 2", "speed 1",
-		"wifi?", "speed?"}
+		"streamon", "streamoff", "wifi?", "speed?"}
 	if !reflect.DeepEqual(c.rs, e) {
 		t.Errorf("expected cmds %+v, got %+v", e, c.rs)
 	}
 
 	// Test events
-	testEvents(t, &tookOff, &landed, wg, s, me)
+	testEvents(t, &tookOff, &landed, wg, s, v, me)
 
 	// Timeout
 	defaultTimeout = time.Millisecond
@@ -265,6 +277,17 @@ func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool, m *sync.Mutex) 
 		}
 	}))
 
+	// Video events
+	wg.Add(1)
+	d.On(VideoPacketEvent, VideoPacketEventHandler(func(p []byte) {
+		defer wg.Done()
+
+		// Check packet
+		if !bytes.Equal(p, []byte("packet")) {
+			t.Errorf("expected packet, got %s", p)
+		}
+	}))
+
 	// Take off event
 	wg.Add(1)
 	d.On(TakeOffEvent, func(interface{}) {
@@ -287,10 +310,15 @@ func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool, m *sync.Mutex) 
 	return
 }
 
-func testEvents(t *testing.T, tookOff, landed *bool, wg *sync.WaitGroup, s *dialer, m *sync.Mutex) {
-	// Trigger events
+func testEvents(t *testing.T, tookOff, landed *bool, wg *sync.WaitGroup, s, v *dialer, m *sync.Mutex) {
+	// Trigger state event
 	if _, err := s.conn.Write([]byte(strState)); err != nil {
 		t.Error(errors.Wrap(err, "test: writing state failed"))
+	}
+
+	// Trigger video event
+	if _, err := v.conn.Write([]byte("packet")); err != nil {
+		t.Error(errors.Wrap(err, "test: writing video packet failed"))
 	}
 
 	// Wait
