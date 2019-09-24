@@ -23,6 +23,7 @@ type dialer struct {
 	h       func([]byte) []byte
 	laddr   string
 	raddr   string
+	mt      *sync.Mutex // Locks timeout
 	rs      []string
 	t       *testing.T
 	timeout bool
@@ -31,6 +32,7 @@ type dialer struct {
 func newDialer(t *testing.T, laddr, raddr string) *dialer {
 	return &dialer{
 		laddr: laddr,
+		mt:    &sync.Mutex{},
 		raddr: raddr,
 		t:     t,
 	}
@@ -82,14 +84,17 @@ func (d *dialer) start() (err error) {
 			d.rs = append(d.rs, string(b[:n]))
 
 			// Handle
+			d.mt.Lock()
 			if d.h != nil && !d.timeout {
 				if r := d.h(b[:n]); len(r) > 0 {
 					if _, err := d.conn.Write(r); err != nil {
+						d.mt.Unlock()
 						d.t.Log(errors.Wrap(err, "test: writing failed"))
 						return
 					}
 				}
 			}
+			d.mt.Unlock()
 		}
 	}()
 	return
@@ -196,22 +201,30 @@ func TestDrone(t *testing.T) {
 
 	// Take off
 	tookOff := false
-	d.On(TakeOffEvent, func(interface{}) { tookOff = true })
+	wg.Add(1)
+	d.On(TakeOffEvent, func(interface{}) {
+		tookOff = true
+		wg.Done()
+	})
 	if err = d.TakeOff(); err != nil {
 		t.Error(errors.Wrap(err, "err should be nil"))
 	}
-	time.Sleep(time.Millisecond)
+	wg.Wait()
 	if !tookOff {
 		t.Error("expected tookoff == true, got false")
 	}
 
 	// Land
 	landed := false
-	d.On(LandEvent, func(interface{}) { landed = true })
+	wg.Add(1)
+	d.On(LandEvent, func(interface{}) {
+		landed = true
+		wg.Done()
+	})
 	if err = d.Land(); err != nil {
 		t.Error(errors.Wrap(err, "err should be nil"))
 	}
-	time.Sleep(time.Millisecond)
+	wg.Wait()
 	if !landed {
 		t.Error("expected landed == true, got false")
 	}
@@ -308,11 +321,15 @@ func TestDrone(t *testing.T) {
 
 	// Timeout
 	defaultTimeout = time.Millisecond
+	c.mt.Lock()
 	c.timeout = true
+	c.mt.Unlock()
 	if err = d.command(); err == nil || errors.Cause(err) != context.DeadlineExceeded {
 		t.Errorf("error should be %s", context.DeadlineExceeded)
 	}
+	c.mt.Lock()
 	c.timeout = false
+	c.mt.Unlock()
 }
 
 var (
