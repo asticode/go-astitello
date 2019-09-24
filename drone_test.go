@@ -177,35 +177,10 @@ func TestDrone(t *testing.T) {
 	}
 	defer d.Disconnect()
 
-	// Handle state events
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	d.On(StateEvent, StateEventHandler(func(s State) {
-		defer wg.Done()
-
-		// Check state
-		if s != expectedState {
-			t.Errorf("expected state %+v, got %+v", expectedState, s)
-		} else if d.State() != s {
-			t.Error("state has not been updated")
-		}
-	}))
-
-	// Handle take off event
-	tookOff := false
-	wg.Add(1)
-	d.On(TakeOffEvent, func(interface{}) {
-		tookOff = true
-		wg.Done()
-	})
-
-	// Handle land event
+	// Handle events
 	landed := false
-	wg.Add(1)
-	d.On(LandEvent, func(interface{}) {
-		landed = true
-		wg.Done()
-	})
+	tookOff := false
+	wg := handleEvents(t, d, &tookOff, &landed)
 
 	// Test functions returning an error
 	for idx, f := range []func() error{
@@ -256,18 +231,8 @@ func TestDrone(t *testing.T) {
 		t.Errorf("expected cmds %+v, got %+v", e, c.rs)
 	}
 
-	// Trigger events
-	if _, err = s.conn.Write([]byte(strState)); err != nil {
-		t.Error(errors.Wrap(err, "test: writing state failed"))
-	}
-	wg.Wait()
-
 	// Test events
-	if !tookOff {
-		t.Error("expected tookoff == true, got false")
-	} else if !landed {
-		t.Error("expected landed == true, got false")
-	}
+	testEvents(t, tookOff, landed, wg, s)
 
 	// Timeout
 	defaultTimeout = time.Millisecond
@@ -280,4 +245,56 @@ func TestDrone(t *testing.T) {
 	c.mt.Lock()
 	c.timeout = false
 	c.mt.Unlock()
+}
+
+func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool) (wg *sync.WaitGroup) {
+	// Create wait group
+	wg = &sync.WaitGroup{}
+
+	// State events
+	wg.Add(1)
+	d.On(StateEvent, StateEventHandler(func(s State) {
+		defer wg.Done()
+
+		// Check state
+		if s != expectedState {
+			t.Errorf("expected state %+v, got %+v", expectedState, s)
+		} else if d.State() != s {
+			t.Error("state has not been updated")
+		}
+	}))
+
+	// Take off event
+	wg.Add(1)
+	d.On(TakeOffEvent, func(interface{}) {
+		defer wg.Done()
+
+		*tookOff = true
+	})
+
+	// Land event
+	wg.Add(1)
+	d.On(LandEvent, func(interface{}) {
+		defer wg.Done()
+
+		*landed = true
+	})
+	return
+}
+
+func testEvents(t *testing.T, tookOff, landed bool, wg *sync.WaitGroup, s *dialer) {
+	// Trigger events
+	if _, err := s.conn.Write([]byte(strState)); err != nil {
+		t.Error(errors.Wrap(err, "test: writing state failed"))
+	}
+
+	// Wait
+	wg.Wait()
+
+	// Check
+	if !tookOff {
+		t.Error("expected tookoff == true, got false")
+	} else if !landed {
+		t.Error("expected landed == true, got false")
+	}
 }
