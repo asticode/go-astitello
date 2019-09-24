@@ -178,9 +178,10 @@ func TestDrone(t *testing.T) {
 	defer d.Disconnect()
 
 	// Handle events
+	me := &sync.Mutex{} // Locks events
 	landed := false
 	tookOff := false
-	wg := handleEvents(t, d, &tookOff, &landed)
+	wg := handleEvents(t, d, &tookOff, &landed, me)
 
 	// Test functions returning an error
 	for idx, f := range []func() error{
@@ -232,7 +233,7 @@ func TestDrone(t *testing.T) {
 	}
 
 	// Test events
-	testEvents(t, tookOff, landed, wg, s)
+	testEvents(t, &tookOff, &landed, wg, s, me)
 
 	// Timeout
 	defaultTimeout = time.Millisecond
@@ -247,7 +248,7 @@ func TestDrone(t *testing.T) {
 	c.mt.Unlock()
 }
 
-func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool) (wg *sync.WaitGroup) {
+func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool, m *sync.Mutex) (wg *sync.WaitGroup) {
 	// Create wait group
 	wg = &sync.WaitGroup{}
 
@@ -269,7 +270,9 @@ func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool) (wg *sync.WaitG
 	d.On(TakeOffEvent, func(interface{}) {
 		defer wg.Done()
 
+		m.Lock()
 		*tookOff = true
+		m.Unlock()
 	})
 
 	// Land event
@@ -277,12 +280,14 @@ func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool) (wg *sync.WaitG
 	d.On(LandEvent, func(interface{}) {
 		defer wg.Done()
 
+		m.Lock()
 		*landed = true
+		m.Unlock()
 	})
 	return
 }
 
-func testEvents(t *testing.T, tookOff, landed bool, wg *sync.WaitGroup, s *dialer) {
+func testEvents(t *testing.T, tookOff, landed *bool, wg *sync.WaitGroup, s *dialer, m *sync.Mutex) {
 	// Trigger events
 	if _, err := s.conn.Write([]byte(strState)); err != nil {
 		t.Error(errors.Wrap(err, "test: writing state failed"))
@@ -291,10 +296,14 @@ func testEvents(t *testing.T, tookOff, landed bool, wg *sync.WaitGroup, s *diale
 	// Wait
 	wg.Wait()
 
+	// Lock
+	m.Lock()
+	defer m.Unlock()
+
 	// Check
-	if !tookOff {
+	if !*tookOff {
 		t.Error("expected tookoff == true, got false")
-	} else if !landed {
+	} else if !*landed {
 		t.Error("expected landed == true, got false")
 	}
 }

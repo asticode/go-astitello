@@ -21,6 +21,7 @@ var (
 	cmdAddr        = "192.168.10.1:8889"
 	respAddr       = ":8889"
 	stateAddr      = ":8890"
+	videoAddr      = ":11111"
 )
 
 // Events
