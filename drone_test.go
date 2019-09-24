@@ -13,7 +13,11 @@ import (
 	"reflect"
 
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
+)
+
+var (
+	strState      = "pitch:8;roll:9;yaw:10;vgx:11;vgy:12;vgz:13;templ:14;temph:15;tof:16;h:17;bat:18;baro:19.1;time:20;agx:21.1;agy:22.1;agz:23.1;"
+	expectedState = State{Acceleration: Acceleration{X: 21.1, Y: 22.1, Z: 23.1}, Attitude: Attitude{Pitch: 8, Roll: 9, Yaw: 10}, Barometer: 19.1, Battery: 18, FlightDistance: 16, FlightTime: 20, Height: 17, HighestTemperature: 15, LowestTemperature: 14, Speed: Speed{X: 11, Y: 12, Z: 13}}
 )
 
 type dialer struct {
@@ -173,7 +177,7 @@ func TestDrone(t *testing.T) {
 	}
 	defer d.Disconnect()
 
-	// State
+	// Handle state events
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	d.On(StateEvent, StateEventHandler(func(s State) {
@@ -189,110 +193,49 @@ func TestDrone(t *testing.T) {
 			t.Error("state has not been updated")
 		}
 	}))
-	if _, err = s.conn.Write([]byte(strState)); err != nil {
-		t.Error(errors.Wrap(err, "test: writing state failed"))
-	}
-	wg.Wait()
 
-	// Emergency
-	if err = d.Emergency(); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Take off
+	// Handle take off event
 	tookOff := false
 	wg.Add(1)
 	d.On(TakeOffEvent, func(interface{}) {
 		tookOff = true
 		wg.Done()
 	})
-	if err = d.TakeOff(); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-	wg.Wait()
-	if !tookOff {
-		t.Error("expected tookoff == true, got false")
-	}
 
-	// Land
+	// Handle land event
 	landed := false
 	wg.Add(1)
 	d.On(LandEvent, func(interface{}) {
 		landed = true
 		wg.Done()
 	})
-	if err = d.Land(); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-	wg.Wait()
-	if !landed {
-		t.Error("expected landed == true, got false")
-	}
 
-	// Up
-	if err = d.Up(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Down
-	if err = d.Down(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Left
-	if err = d.Left(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Right
-	if err = d.Right(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Forward
-	if err = d.Forward(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Back
-	if err = d.Back(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Rotate cw
-	if err = d.RotateClockwise(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Rotate ccw
-	if err = d.RotateCounterClockwise(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Flip
-	if err = d.Flip(FlipLeft); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Go
-	if err = d.Go(1, 2, 3, 4); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Curve
-	if err = d.Curve(1, 2, 3, 4, 5, 6, 7); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
-
-	// Sticks
-	if err = d.SetSticks(1, 2, 3, 4); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
+	// Test functions returning an error
+	for idx, f := range []func() error{
+		d.Emergency,
+		d.TakeOff,
+		d.Land,
+		func() error { return d.Up(1) },
+		func() error { return d.Down(1) },
+		func() error { return d.Left(1) },
+		func() error { return d.Right(1) },
+		func() error { return d.Forward(1) },
+		func() error { return d.Back(1) },
+		func() error { return d.RotateClockwise(1) },
+		func() error { return d.RotateCounterClockwise(1) },
+		func() error { return d.Flip(FlipLeft) },
+		func() error { return d.Go(1, 2, 3, 4) },
+		func() error { return d.Curve(1, 2, 3, 4, 5, 6, 7) },
+		func() error { return d.SetSticks(1, 2, 3, 4) },
+		func() error { return d.SetWifi("1", "2") },
+		func() error { return d.SetSpeed(1) },
+	} {
+		if err = f(); err != nil {
+			t.Error(errors.Wrapf(err, "err %d should be nil", idx))
+		}
 	}
 
 	// Wifi
-	if err = d.SetWifi("1", "2"); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
 	var snr int
 	if snr, err = d.Wifi(); err != nil {
 		t.Error(errors.Wrap(err, "err should be nil"))
@@ -301,9 +244,6 @@ func TestDrone(t *testing.T) {
 	}
 
 	// Speed
-	if err = d.SetSpeed(1); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
-	}
 	var speed int
 	if speed, err = d.Speed(); err != nil {
 		t.Error(errors.Wrap(err, "err should be nil"))
@@ -313,10 +253,24 @@ func TestDrone(t *testing.T) {
 
 	// Cmds
 	e := []string{"command", "emergency", "takeoff", "land", "up 1", "down 1", "left 1", "right 1", "forward 1",
-		"back 1", "cw 1", "ccw 1", "flip l", "go 1 2 3 4", "curve 1 2 3 4 5 6 7", "rc 1 2 3 4", "wifi 1 2", "wifi?",
-		"speed 1", "speed?"}
+		"back 1", "cw 1", "ccw 1", "flip l", "go 1 2 3 4", "curve 1 2 3 4 5 6 7", "rc 1 2 3 4", "wifi 1 2", "speed 1",
+		"wifi?", "speed?"}
 	if !reflect.DeepEqual(c.rs, e) {
 		t.Errorf("expected cmds %+v, got %+v", e, c.rs)
+	}
+
+	// Trigger events
+	if _, err = s.conn.Write([]byte(strState)); err != nil {
+		t.Error(errors.Wrap(err, "test: writing state failed"))
+	}
+	wg.Wait()
+
+	// Test events
+	if !tookOff {
+		t.Error("expected tookoff == true, got false")
+	}
+	if !landed {
+		t.Error("expected landed == true, got false")
 	}
 
 	// Timeout
@@ -330,15 +284,4 @@ func TestDrone(t *testing.T) {
 	c.mt.Lock()
 	c.timeout = false
 	c.mt.Unlock()
-}
-
-var (
-	strState      = "pitch:8;roll:9;yaw:10;vgx:11;vgy:12;vgz:13;templ:14;temph:15;tof:16;h:17;bat:18;baro:19.1;time:20;agx:21.1;agy:22.1;agz:23.1;"
-	expectedState = State{Acceleration: Acceleration{X: 21.1, Y: 22.1, Z: 23.1}, Attitude: Attitude{Pitch: 8, Roll: 9, Yaw: 10}, Barometer: 19.1, Battery: 18, FlightDistance: 16, FlightTime: 20, Height: 17, HighestTemperature: 15, LowestTemperature: 14, Speed: Speed{X: 11, Y: 12, Z: 13}}
-)
-
-func TestNewState(t *testing.T) {
-	s, err := newState(strState)
-	assert.Equal(t, expectedState, s)
-	assert.NoError(t, err)
 }
