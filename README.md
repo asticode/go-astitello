@@ -1,3 +1,4 @@
+[![GoReportCard](http://goreportcard.com/badge/github.com/asticode/go-astitello)](http://goreportcard.com/report/github.com/asticode/go-astitello)
 [![GoDoc](https://godoc.org/github.com/asticode/go-astitello?status.svg)](https://godoc.org/github.com/asticode/go-astitello)
 
 This is a Golang implementation of the DJI Tello SDK.
