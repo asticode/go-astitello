@@ -15,7 +15,13 @@ import (
 	"github.com/pkg/errors"
 )
 
-const defaultTimeout = 5 * time.Second
+// Defaults
+var (
+	defaultTimeout = 5 * time.Second
+	cmdAddr        = "192.168.10.1:8889"
+	respAddr       = ":8889"
+	stateAddr      = ":8890"
+)
 
 // Events
 const (
@@ -133,7 +139,7 @@ func (d *Drone) Connect() (err error) {
 func (d *Drone) handleState() (err error) {
 	// Create laddr
 	var laddr *net.UDPAddr
-	if laddr, err = net.ResolveUDPAddr("udp", ":8890"); err != nil {
+	if laddr, err = net.ResolveUDPAddr("udp", stateAddr); err != nil {
 		err = errors.Wrap(err, "astitello: creating laddr failed")
 		return
 	}
@@ -240,14 +246,14 @@ func StateEventHandler(f func(s State)) astievent.EventHandler {
 func (d *Drone) handleCmds() (err error) {
 	// Create raddr
 	var raddr *net.UDPAddr
-	if raddr, err = net.ResolveUDPAddr("udp", "192.168.10.1:8889"); err != nil {
+	if raddr, err = net.ResolveUDPAddr("udp", cmdAddr); err != nil {
 		err = errors.Wrap(err, "astitello: creating raddr failed")
 		return
 	}
 
 	// Create laddr
 	var laddr *net.UDPAddr
-	if laddr, err = net.ResolveUDPAddr("udp", ":8889"); err != nil {
+	if laddr, err = net.ResolveUDPAddr("udp", respAddr); err != nil {
 		err = errors.Wrap(err, "astitello: creating laddr failed")
 		return
 	}
@@ -261,9 +267,9 @@ func (d *Drone) handleCmds() (err error) {
 	// Read responses
 	go d.readResponses()
 
-	// Send "command" cmd
-	if err = d.sendCmd("command", defaultTimeout, defaultRespHandler); err != nil {
-		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
+	// Command
+	if err = d.command(); err != nil {
+		err = errors.Wrap(err, "astitello: command failed")
 		return
 	}
 	return
@@ -386,6 +392,15 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 	// Custom
 	if err = f(d.lr); err != nil {
 		err = errors.Wrap(err, "astitello: custom handler failed")
+		return
+	}
+	return
+}
+
+func (d *Drone) command() (err error) {
+	// Send "command" cmd
+	if err = d.sendCmd("command", defaultTimeout, defaultRespHandler); err != nil {
+		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
 		return
 	}
 	return
@@ -562,12 +577,15 @@ func (d *Drone) SetWifi(ssid, password string) (err error) {
 }
 
 // Wifi returns the Wifi SNR
-func (d *Drone) Wifi() (snr string, err error) {
+func (d *Drone) Wifi() (snr int, err error) {
 	// Send cmd
 	// It returns "100.0"
 	if err = d.sendCmd("wifi?", defaultTimeout, func(resp string) (err error) {
-		// Set snr
-		snr = resp
+		// Parse
+		if snr, err = strconv.Atoi(resp); err != nil {
+			err = errors.Wrapf(err, "astitello: atoi %s failed", resp)
+			return
+		}
 		return
 	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending wifi? cmd failed")
