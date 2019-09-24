@@ -29,7 +29,7 @@ func main() {
 		// Pipe stdin
 		in, err := cmd.StdinPipe()
 		if err != nil {
-			err = errors.Wrap(err, "main: piping stdin failed")
+			astilog.Error(errors.Wrap(err, "main: piping stdin failed"))
 			return
 		}
 		defer in.Close()
@@ -60,7 +60,8 @@ func main() {
 
 	// Connect to the drone
 	if err := d.Connect(); err != nil {
-		astilog.Fatal(errors.Wrap(err, "main: connecting to the drone failed"))
+		astilog.Error(errors.Wrap(err, "main: connecting to the drone failed"))
+		return
 	}
 	defer d.Disconnect()
 
