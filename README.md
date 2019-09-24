@@ -33,13 +33,17 @@ IMPORTANT: the drone will make a flip to its right during this example, make sur
 
 3) If this is the first time you're using it, you may have to activate it using the official app
 
-4) Run the following command:
+4) If you want to test the video, install `ffmpeg` on your machine
+
+5) Run the following command:
 
 ```
 $ go run example/main.go
 ```
 
 5) Watch your drone take off, make a flip to its right and land! Make sure to look at the terminal output too, some valuable information were printed there!
+
+6) If you've installed `ffmpeg` you should also see a new file called `example.mp4`. Check it out!
 
 # Use it in your code
 
