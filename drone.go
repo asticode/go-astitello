@@ -32,8 +32,8 @@ const (
 	FlipRight   = "r"
 )
 
-// NotConnected is the error thrown when trying to send a cmd while not connected to the drone
-var NotConnected = errors.New("astitello: not connected")
+// ErrNotConnected is the error thrown when trying to send a cmd while not connected to the drone
+var ErrNotConnected = errors.New("astitello: not connected")
 
 // Drone represents an object capable of interacting with the SDK
 type Drone struct {
@@ -333,7 +333,7 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 
 	// No connection
 	if d.cmdConn == nil {
-		err = NotConnected
+		err = ErrNotConnected
 		return
 	}
 
