@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-
 	"time"
 
 	"github.com/asticode/go-astilog"
@@ -26,9 +25,10 @@ var (
 
 // Events
 const (
-	LandEvent    = "land"
-	StateEvent   = "state"
-	TakeOffEvent = "take.off"
+	LandEvent        = "land"
+	StateEvent       = "state"
+	TakeOffEvent     = "take.off"
+	VideoPacketEvent = "video.packet"
 )
 
 // Flip directions
@@ -56,6 +56,7 @@ type Drone struct {
 	rc        *sync.Cond
 	s         *State
 	stateConn *net.UDPConn
+	videoConn *net.UDPConn
 }
 
 // New creates a new Drone
@@ -106,6 +107,9 @@ func (d *Drone) Disconnect() {
 		if d.stateConn != nil {
 			d.stateConn.Close()
 		}
+		if d.videoConn != nil {
+			d.videoConn.Close()
+		}
 	})
 }
 
@@ -125,6 +129,12 @@ func (d *Drone) Connect() (err error) {
 		// Handle state
 		if err = d.handleState(); err != nil {
 			err = errors.Wrap(err, "astitello: handling state failed")
+			return
+		}
+
+		// Handle video
+		if err = d.handleVideo(); err != nil {
+			err = errors.Wrap(err, "astitello: handling video failed")
 			return
 		}
 
@@ -190,57 +200,75 @@ func (d *Drone) readState() {
 	}
 }
 
-// State represents the drone's state
-type State struct {
-	Acceleration       Acceleration // The acceleration
-	Attitude           Attitude     // The attitude
-	Barometer          float64      // The barometer measurement in cm
-	Battery            int          // The percentage of the current battery level
-	FlightDistance     int          // The time of flight distance in cm
-	FlightTime         int          // The amount of time the motor has been used
-	Height             int          // The height in cm
-	HighestTemperature int          // The highest temperature in degree Celsius
-	LowestTemperature  int          // The lowest temperature in degree Celsius
-	Speed              Speed        // The speed
-}
-
-// Acceleration represents the drone's acceleration
-type Acceleration struct {
-	X float64
-	Y float64
-	Z float64
-}
-
-// Attitude represents the drone's attitude
-type Attitude struct {
-	Pitch int // The degree of the attitude pitch
-	Roll  int // The degree of the attitude roll
-	Yaw   int // The degree of the attitude yaw
-}
-
-// Speed represents the drone's speed
-type Speed struct {
-	X int
-	Y int
-	Z int
-}
-
-func newState(i string) (s State, err error) {
-	var n int
-	if n, err = fmt.Sscanf(i, "pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Attitude.Pitch, &s.Attitude.Roll, &s.Attitude.Yaw, &s.Speed.X, &s.Speed.Y, &s.Speed.Z, &s.LowestTemperature, &s.HighestTemperature, &s.FlightDistance, &s.Height, &s.Battery, &s.Barometer, &s.FlightTime, &s.Acceleration.X, &s.Acceleration.Y, &s.Acceleration.Z); err != nil {
-		err = errors.Wrap(err, "astitello: scanf failed")
-		return
-	} else if n != 16 {
-		err = fmt.Errorf("astitello: scanf only parsed %d items, expected 10", n)
-		return
-	}
-	return
-}
-
 // StateEventHandler returns the proper EventHandler for the State event
 func StateEventHandler(f func(s State)) astievent.EventHandler {
 	return func(payload interface{}) {
 		f(payload.(State))
+	}
+}
+
+func (d *Drone) handleVideo() (err error) {
+	// Create laddr
+	var laddr *net.UDPAddr
+	if laddr, err = net.ResolveUDPAddr("udp", videoAddr); err != nil {
+		err = errors.Wrap(err, "astitello: creating laddr failed")
+		return
+	}
+
+	// Listen
+	if d.videoConn, err = net.ListenUDP("udp", laddr); err != nil {
+		err = errors.Wrap(err, "astitello: listening failed")
+		return
+	}
+
+	// Read video
+	go d.readVideo()
+	return
+}
+
+func (d *Drone) readVideo() {
+	var buf []byte
+	var bufLength int
+	for {
+		// Check context
+		if d.ctx.Err() != nil {
+			return
+		}
+
+		// Read
+		b := make([]byte, 2048)
+		n, err := d.videoConn.Read(b)
+		if err != nil {
+			if d.ctx.Err() == nil {
+				astilog.Error(errors.Wrap(err, "astitello: reading video failed"))
+			}
+			continue
+		}
+
+		// Append to buffer
+		buf = append(buf, b[:n]...)
+		bufLength += n
+
+		// Packet is not over
+		if n == 1460 {
+			continue
+		}
+
+		// Dispatch
+		p := make([]byte, bufLength)
+		copy(p, buf[:bufLength])
+		d.d.Dispatch(VideoPacketEvent, p)
+
+		// Reset buffer
+		buf = buf[:0]
+		bufLength = 0
+	}
+}
+
+// VideoPacketEventHandler returns the proper EventHandler for the VideoPacket event
+func VideoPacketEventHandler(f func(p []byte)) astievent.EventHandler {
+	return func(payload interface{}) {
+		f(payload.([]byte))
 	}
 }
 
@@ -402,6 +430,26 @@ func (d *Drone) command() (err error) {
 	// Send "command" cmd
 	if err = d.sendCmd("command", defaultTimeout, defaultRespHandler); err != nil {
 		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
+		return
+	}
+	return
+}
+
+// StartVideo makes Tello start streaming video
+func (d *Drone) StartVideo() (err error) {
+	// Send cmd
+	if err = d.sendCmd("streamon", 0, defaultRespHandler); err != nil {
+		err = errors.Wrap(err, "astitello: sending streamon cmd failed")
+		return
+	}
+	return
+}
+
+// StopVideo makes Tello stop streaming video
+func (d *Drone) StopVideo() (err error) {
+	// Send cmd
+	if err = d.sendCmd("streamoff", 0, defaultRespHandler); err != nil {
+		err = errors.Wrap(err, "astitello: sending streamoff cmd failed")
 		return
 	}
 	return
