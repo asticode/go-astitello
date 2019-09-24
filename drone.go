@@ -24,7 +24,7 @@ const (
 	TakeOffEvent = "take.off"
 )
 
-// Flips
+// Flip directions
 const (
 	FlipBack    = "b"
 	FlipForward = "f"
@@ -32,8 +32,10 @@ const (
 	FlipRight   = "r"
 )
 
-var ErrNotConnected = errors.New("astitello: not connected")
+// NotConnected is the error thrown when trying to send a cmd while not connected to the drone
+var NotConnected = errors.New("astitello: not connected")
 
+// Drone represents an object capable of interacting with the SDK
 type Drone struct {
 	cancel    context.CancelFunc
 	cmdConn   *net.UDPConn
@@ -49,6 +51,7 @@ type Drone struct {
 	stateConn *net.UDPConn
 }
 
+// New creates a new Drone
 func New() *Drone {
 	return &Drone{
 		d:  astievent.NewDispatcher(),
@@ -61,16 +64,19 @@ func New() *Drone {
 	}
 }
 
+// State returns the drone's state
 func (d *Drone) State() State {
 	d.ms.Lock()
 	defer d.ms.Unlock()
 	return *d.s
 }
 
+// On adds an event handler
 func (d *Drone) On(name string, h astievent.EventHandler) {
 	d.d.On(name, h)
 }
 
+// Disconnect disconnects from the drone
 func (d *Drone) Disconnect() {
 	// Make sure to execute this only once
 	d.ol.Do(func() {
@@ -96,6 +102,7 @@ func (d *Drone) Disconnect() {
 	})
 }
 
+// Connect connects to the drone
 func (d *Drone) Connect() (err error) {
 	// Make sure to execute this only once
 	d.oo.Do(func() {
@@ -176,32 +183,36 @@ func (d *Drone) readState() {
 	}
 }
 
+// State represents the drone's state
 type State struct {
-	Acceleration       CoordinateFloat64 // The acceleration
-	Attitude           Attitude          // The attitude
-	Barometer          float64           // The barometer measurement in cm
-	Battery            int               // The percentage of the current battery level
-	FlightDistance     int               // The time of flight distance in cm
-	FlightTime         int               // The amount of time the motor has been used
-	Height             int               // The height in cm
-	HighestTemperature int               // The highest temperature in degree Celsius
-	LowestTemperature  int               // The lowest temperature in degree Celsius
-	Speed              CoordinateInt     // The speed
+	Acceleration       Acceleration // The acceleration
+	Attitude           Attitude     // The attitude
+	Barometer          float64      // The barometer measurement in cm
+	Battery            int          // The percentage of the current battery level
+	FlightDistance     int          // The time of flight distance in cm
+	FlightTime         int          // The amount of time the motor has been used
+	Height             int          // The height in cm
+	HighestTemperature int          // The highest temperature in degree Celsius
+	LowestTemperature  int          // The lowest temperature in degree Celsius
+	Speed              Speed        // The speed
 }
 
+// Acceleration represents the drone's acceleration
+type Acceleration struct {
+	X float64
+	Y float64
+	Z float64
+}
+
+// Attitude represents the drone's attitude
 type Attitude struct {
 	Pitch int // The degree of the attitude pitch
 	Roll  int // The degree of the attitude roll
 	Yaw   int // The degree of the attitude yaw
 }
 
-type CoordinateFloat64 struct {
-	X float64
-	Y float64
-	Z float64
-}
-
-type CoordinateInt struct {
+// Speed represents the drone's speed
+type Speed struct {
 	X int
 	Y int
 	Z int
@@ -219,6 +230,7 @@ func newState(i string) (s State, err error) {
 	return
 }
 
+// StateEventHandler returns the proper EventHandler for the State event
 func StateEventHandler(f func(s State)) astievent.EventHandler {
 	return func(payload interface{}) {
 		f(payload.(State))
@@ -321,7 +333,7 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 
 	// No connection
 	if d.cmdConn == nil {
-		err = ErrNotConnected
+		err = NotConnected
 		return
 	}
 
@@ -379,6 +391,7 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 	return
 }
 
+// Emergency makes Tello stop all motors immediately
 // This cmd doesn't seem to be receiving any response
 func (d *Drone) Emergency() (err error) {
 	// Send cmd
@@ -389,6 +402,7 @@ func (d *Drone) Emergency() (err error) {
 	return
 }
 
+// TakeOff makes Tello auto takeoff
 func (d *Drone) TakeOff() (err error) {
 	// Send cmd
 	if err = d.sendCmd("takeoff", 0, d.respHandlerWithEvent(TakeOffEvent)); err != nil {
@@ -398,6 +412,7 @@ func (d *Drone) TakeOff() (err error) {
 	return
 }
 
+// Land makes Tello auto land
 func (d *Drone) Land() (err error) {
 	// Send cmd
 	if err = d.sendCmd("land", 0, d.respHandlerWithEvent(LandEvent)); err != nil {
@@ -407,7 +422,7 @@ func (d *Drone) Land() (err error) {
 	return
 }
 
-// x is in cm
+// Up makes Tello fly up with distance x cm
 func (d *Drone) Up(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("up %d", x), 0, defaultRespHandler); err != nil {
@@ -417,7 +432,7 @@ func (d *Drone) Up(x int) (err error) {
 	return
 }
 
-// x is in cm
+// Down makes Tello fly down with distance x cm
 func (d *Drone) Down(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("down %d", x), 0, defaultRespHandler); err != nil {
@@ -427,7 +442,7 @@ func (d *Drone) Down(x int) (err error) {
 	return
 }
 
-// x is in cm
+// Left makes Tello fly left with distance x cm
 func (d *Drone) Left(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("left %d", x), 0, defaultRespHandler); err != nil {
@@ -437,7 +452,7 @@ func (d *Drone) Left(x int) (err error) {
 	return
 }
 
-// x is in cm
+// Right makes Tello fly right with distance x cm
 func (d *Drone) Right(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("right %d", x), 0, defaultRespHandler); err != nil {
@@ -447,7 +462,7 @@ func (d *Drone) Right(x int) (err error) {
 	return
 }
 
-// x is in cm
+// Forward makes Tello fly forward with distance x cm
 func (d *Drone) Forward(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("forward %d", x), 0, defaultRespHandler); err != nil {
@@ -457,7 +472,7 @@ func (d *Drone) Forward(x int) (err error) {
 	return
 }
 
-// x is in cm
+// Back makes Tello fly back with distance x cm
 func (d *Drone) Back(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("back %d", x), 0, defaultRespHandler); err != nil {
@@ -467,7 +482,7 @@ func (d *Drone) Back(x int) (err error) {
 	return
 }
 
-// x is in degree
+// RotateClockwise makes Tello rotate x degree clockwise
 func (d *Drone) RotateClockwise(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("cw %d", x), 0, defaultRespHandler); err != nil {
@@ -477,7 +492,7 @@ func (d *Drone) RotateClockwise(x int) (err error) {
 	return
 }
 
-// x is in degree
+// RotateCounterClockwise makes Tello rotate x degree counter-clockwise
 func (d *Drone) RotateCounterClockwise(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("ccw %d", x), 0, defaultRespHandler); err != nil {
@@ -487,7 +502,8 @@ func (d *Drone) RotateCounterClockwise(x int) (err error) {
 	return
 }
 
-// x is one of exported Flip types
+// Flip makes Tello flip in the specified direction
+// Check out Flip... constants for available flip directions
 func (d *Drone) Flip(x string) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("flip %s", x), 0, defaultRespHandler); err != nil {
@@ -497,8 +513,7 @@ func (d *Drone) Flip(x string) (err error) {
 	return
 }
 
-// x, y and z are in cm
-// speed is in cm/s
+// Go makes Tello fly to x y z in speed (cm/s)
 func (d *Drone) Go(x, y, z, speed int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("go %d %d %d %d", x, y, z, speed), 0, defaultRespHandler); err != nil {
@@ -508,8 +523,7 @@ func (d *Drone) Go(x, y, z, speed int) (err error) {
 	return
 }
 
-// x1, x2, y1, y2, z1 and z2 are in cm
-// speed is in cm/s
+// Curve makes Tello fly a curve defined by the current and two given coordinates with speed (cm/s)
 func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed), 0, defaultRespHandler); err != nil {
@@ -519,6 +533,7 @@ func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 	return
 }
 
+// SetSticks sends RC control via four channels
 // All values are between -100 and 100
 // lr: left/right
 // fb: forward/backward
@@ -534,6 +549,7 @@ func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 	return
 }
 
+// SetWifi sets Wi-Fi with SSID password
 // I couldn't make this work (it returned 'error' even though the SSID was changed but the password was not)
 // If anyone manages to make it work, create an issue in github, I'm really interested in how you managed that :D
 func (d *Drone) SetWifi(ssid, password string) (err error) {
@@ -545,6 +561,7 @@ func (d *Drone) SetWifi(ssid, password string) (err error) {
 	return
 }
 
+// Wifi returns the Wifi SNR
 func (d *Drone) Wifi() (snr string, err error) {
 	// Send cmd
 	// It returns "100.0"
@@ -559,7 +576,7 @@ func (d *Drone) Wifi() (snr string, err error) {
 	return
 }
 
-// x is in cm/s
+// SetSpeed sets speed to x cm/s
 func (d *Drone) SetSpeed(x int) (err error) {
 	// Send cmd
 	if err = d.sendCmd(fmt.Sprintf("speed %d", x), defaultTimeout, defaultRespHandler); err != nil {
@@ -569,6 +586,7 @@ func (d *Drone) SetSpeed(x int) (err error) {
 	return
 }
 
+// Speed returns the current speed (cm/s)
 func (d *Drone) Speed() (x int, err error) {
 	// Send cmd
 	// It returns "100.0"
