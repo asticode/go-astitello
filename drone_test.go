@@ -12,8 +12,9 @@ import (
 
 	"reflect"
 
-	"github.com/pkg/errors"
 	"bytes"
+
+	"github.com/pkg/errors"
 )
 
 var (
