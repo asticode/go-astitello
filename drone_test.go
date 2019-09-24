@@ -186,10 +186,7 @@ func TestDrone(t *testing.T) {
 		// Check state
 		if s != expectedState {
 			t.Errorf("expected state %+v, got %+v", expectedState, s)
-		}
-
-		// Check state has been updated
-		if d.State() != s {
+		} else if d.State() != s {
 			t.Error("state has not been updated")
 		}
 	}))
@@ -268,8 +265,7 @@ func TestDrone(t *testing.T) {
 	// Test events
 	if !tookOff {
 		t.Error("expected tookoff == true, got false")
-	}
-	if !landed {
+	} else if !landed {
 		t.Error("expected landed == true, got false")
 	}
 
