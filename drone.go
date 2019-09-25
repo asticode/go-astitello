@@ -357,10 +357,19 @@ func (d *Drone) respHandlerWithEvent(name string) respHandler {
 	}
 }
 
-func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err error) {
-	// Lock cmd
-	d.mc.Lock()
-	defer d.mc.Unlock()
+type cmd struct {
+	canceller bool
+	cmd       string
+	h         respHandler
+	timeout   time.Duration
+}
+
+func (d *Drone) sendCmd(cmd cmd) (err error) {
+	// If the cmd is not a canceller, we don't want to send it at the same time as other cmds
+	if !cmd.canceller {
+		d.mc.Lock()
+		defer d.mc.Unlock()
+	}
 
 	// Lock resp
 	d.rc.L.Lock()
@@ -373,23 +382,23 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 	}
 
 	// Log
-	astilog.Debugf("astitello: sending cmd '%s'", cmd)
+	astilog.Debugf("astitello: sending cmd '%s'", cmd.cmd)
 
 	// Write
-	if _, err = d.cmdConn.Write([]byte(cmd)); err != nil {
+	if _, err = d.cmdConn.Write([]byte(cmd.cmd)); err != nil {
 		err = errors.Wrap(err, "astitello: writing failed")
 		return
 	}
 
 	// No handler
-	if f == nil {
+	if cmd.h == nil {
 		return
 	}
 
 	// Create context
 	ctx, cancel := context.WithCancel(d.ctx)
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(d.ctx, timeout)
+	if cmd.timeout > 0 {
+		ctx, cancel = context.WithTimeout(d.ctx, cmd.timeout)
 	}
 	defer cancel()
 
@@ -419,7 +428,7 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 	}
 
 	// Custom
-	if err = f(d.lr); err != nil {
+	if err = cmd.h(d.lr); err != nil {
 		err = errors.Wrap(err, "astitello: custom handler failed")
 		return
 	}
@@ -428,7 +437,11 @@ func (d *Drone) sendCmd(cmd string, timeout time.Duration, f respHandler) (err e
 
 func (d *Drone) command() (err error) {
 	// Send "command" cmd
-	if err = d.sendCmd("command", defaultTimeout, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     "command",
+		h:       defaultRespHandler,
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
 		return
 	}
@@ -438,7 +451,11 @@ func (d *Drone) command() (err error) {
 // StartVideo makes Tello start streaming video
 func (d *Drone) StartVideo() (err error) {
 	// Send cmd
-	if err = d.sendCmd("streamon", 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     "streamon",
+		h:       defaultRespHandler,
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending streamon cmd failed")
 		return
 	}
@@ -448,7 +465,11 @@ func (d *Drone) StartVideo() (err error) {
 // StopVideo makes Tello stop streaming video
 func (d *Drone) StopVideo() (err error) {
 	// Send cmd
-	if err = d.sendCmd("streamoff", 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     "streamoff",
+		h:       defaultRespHandler,
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending streamoff cmd failed")
 		return
 	}
@@ -456,10 +477,14 @@ func (d *Drone) StopVideo() (err error) {
 }
 
 // Emergency makes Tello stop all motors immediately
-// This cmd doesn't seem to be receiving any response
+// This cmd doesn't seem to be receiving any response, that's why we don't provide any handler
 func (d *Drone) Emergency() (err error) {
 	// Send cmd
-	if err = d.sendCmd("emergency", 0, nil); err != nil {
+	if err = d.sendCmd(cmd{
+		canceller: true,
+		cmd:       "emergency",
+		timeout:   defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending emergency cmd failed")
 		return
 	}
@@ -469,7 +494,10 @@ func (d *Drone) Emergency() (err error) {
 // TakeOff makes Tello auto takeoff
 func (d *Drone) TakeOff() (err error) {
 	// Send cmd
-	if err = d.sendCmd("takeoff", 0, d.respHandlerWithEvent(TakeOffEvent)); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: "takeoff",
+		h:   d.respHandlerWithEvent(TakeOffEvent),
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending takeoff cmd failed")
 		return
 	}
@@ -479,7 +507,11 @@ func (d *Drone) TakeOff() (err error) {
 // Land makes Tello auto land
 func (d *Drone) Land() (err error) {
 	// Send cmd
-	if err = d.sendCmd("land", 0, d.respHandlerWithEvent(LandEvent)); err != nil {
+	if err = d.sendCmd(cmd{
+		canceller: true,
+		cmd:       "land",
+		h:         d.respHandlerWithEvent(LandEvent),
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending land cmd failed")
 		return
 	}
@@ -489,7 +521,10 @@ func (d *Drone) Land() (err error) {
 // Up makes Tello fly up with distance x cm
 func (d *Drone) Up(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("up %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("up %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending up cmd failed")
 		return
 	}
@@ -499,7 +534,10 @@ func (d *Drone) Up(x int) (err error) {
 // Down makes Tello fly down with distance x cm
 func (d *Drone) Down(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("down %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("down %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending down cmd failed")
 		return
 	}
@@ -509,7 +547,10 @@ func (d *Drone) Down(x int) (err error) {
 // Left makes Tello fly left with distance x cm
 func (d *Drone) Left(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("left %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("left %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending left cmd failed")
 		return
 	}
@@ -519,7 +560,10 @@ func (d *Drone) Left(x int) (err error) {
 // Right makes Tello fly right with distance x cm
 func (d *Drone) Right(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("right %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("right %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending right cmd failed")
 		return
 	}
@@ -529,7 +573,10 @@ func (d *Drone) Right(x int) (err error) {
 // Forward makes Tello fly forward with distance x cm
 func (d *Drone) Forward(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("forward %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("forward %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending forward cmd failed")
 		return
 	}
@@ -539,7 +586,10 @@ func (d *Drone) Forward(x int) (err error) {
 // Back makes Tello fly back with distance x cm
 func (d *Drone) Back(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("back %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("back %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending back cmd failed")
 		return
 	}
@@ -549,7 +599,10 @@ func (d *Drone) Back(x int) (err error) {
 // RotateClockwise makes Tello rotate x degree clockwise
 func (d *Drone) RotateClockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("cw %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("cw %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending cw cmd failed")
 		return
 	}
@@ -559,7 +612,10 @@ func (d *Drone) RotateClockwise(x int) (err error) {
 // RotateCounterClockwise makes Tello rotate x degree counter-clockwise
 func (d *Drone) RotateCounterClockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("ccw %d", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("ccw %d", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending ccw cmd failed")
 		return
 	}
@@ -570,7 +626,10 @@ func (d *Drone) RotateCounterClockwise(x int) (err error) {
 // Check out Flip... constants for available flip directions
 func (d *Drone) Flip(x string) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("flip %s", x), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("flip %s", x),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending flip cmd failed")
 		return
 	}
@@ -580,7 +639,10 @@ func (d *Drone) Flip(x string) (err error) {
 // Go makes Tello fly to x y z in speed (cm/s)
 func (d *Drone) Go(x, y, z, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("go %d %d %d %d", x, y, z, speed), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("go %d %d %d %d", x, y, z, speed),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending go cmd failed")
 		return
 	}
@@ -590,7 +652,10 @@ func (d *Drone) Go(x, y, z, speed int) (err error) {
 // Curve makes Tello fly a curve defined by the current and two given coordinates with speed (cm/s)
 func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed), 0, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd: fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed),
+		h:   defaultRespHandler,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending go cmd failed")
 		return
 	}
@@ -603,10 +668,13 @@ func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 // fb: forward/backward
 // ud: up/down
 // y: yawn
-// This cmd doesn't seem to be receiving any response
+// This cmd doesn't seem to be receiving any response, that's why we don't provide any handler
 func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("rc %d %d %d %d", lr, fb, ud, y), defaultTimeout, nil); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     fmt.Sprintf("rc %d %d %d %d", lr, fb, ud, y),
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending rc cmd failed")
 		return
 	}
@@ -618,7 +686,11 @@ func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 // If anyone manages to make it work, create an issue in github, I'm really interested in how you managed that :D
 func (d *Drone) SetWifi(ssid, password string) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("wifi %s %s", ssid, password), defaultTimeout, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     fmt.Sprintf("wifi %s %s", ssid, password),
+		h:       defaultRespHandler,
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending wifi cmd failed")
 		return
 	}
@@ -629,13 +701,17 @@ func (d *Drone) SetWifi(ssid, password string) (err error) {
 func (d *Drone) Wifi() (snr int, err error) {
 	// Send cmd
 	// It returns "100.0"
-	if err = d.sendCmd("wifi?", defaultTimeout, func(resp string) (err error) {
-		// Parse
-		if snr, err = strconv.Atoi(resp); err != nil {
-			err = errors.Wrapf(err, "astitello: atoi %s failed", resp)
+	if err = d.sendCmd(cmd{
+		cmd: "wifi?",
+		h: func(resp string) (err error) {
+			// Parse
+			if snr, err = strconv.Atoi(resp); err != nil {
+				err = errors.Wrapf(err, "astitello: atoi %s failed", resp)
+				return
+			}
 			return
-		}
-		return
+		},
+		timeout: defaultTimeout,
 	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending wifi? cmd failed")
 		return
@@ -646,7 +722,11 @@ func (d *Drone) Wifi() (snr int, err error) {
 // SetSpeed sets speed to x cm/s
 func (d *Drone) SetSpeed(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(fmt.Sprintf("speed %d", x), defaultTimeout, defaultRespHandler); err != nil {
+	if err = d.sendCmd(cmd{
+		cmd:     fmt.Sprintf("speed %d", x),
+		h:       defaultRespHandler,
+		timeout: defaultTimeout,
+	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending speed cmd failed")
 		return
 	}
@@ -657,17 +737,21 @@ func (d *Drone) SetSpeed(x int) (err error) {
 func (d *Drone) Speed() (x int, err error) {
 	// Send cmd
 	// It returns "100.0"
-	if err = d.sendCmd("speed?", defaultTimeout, func(resp string) (err error) {
-		// Parse
-		var f float64
-		if f, err = strconv.ParseFloat(resp, 64); err != nil {
-			err = errors.Wrapf(err, "astitello: parsing float %s failed", resp)
-			return
-		}
+	if err = d.sendCmd(cmd{
+		cmd: "speed?",
+		h: func(resp string) (err error) {
+			// Parse
+			var f float64
+			if f, err = strconv.ParseFloat(resp, 64); err != nil {
+				err = errors.Wrapf(err, "astitello: parsing float %s failed", resp)
+				return
+			}
 
-		// Set speed
-		x = int(f)
-		return
+			// Set speed
+			x = int(f)
+			return
+		},
+		timeout: defaultTimeout,
 	}); err != nil {
 		err = errors.Wrap(err, "astitello: sending speed? cmd failed")
 		return
