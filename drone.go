@@ -46,11 +46,13 @@ var ErrNotConnected = errors.New("astitello: not connected")
 type Drone struct {
 	cancel    context.CancelFunc
 	cmdConn   *net.UDPConn
+	cmds      map[*cmd]bool
 	ctx       context.Context
 	d         *astievent.Dispatcher
 	lr        string
-	mc        *sync.Mutex // Locks sendCmd
+	mc        *sync.Mutex // Locks cmds
 	ms        *sync.Mutex // Locks s
+	msc       *sync.Mutex // Locks sendCmd
 	ol        *sync.Once  // Limits Close()
 	oo        *sync.Once  // Limits Connect()
 	rc        *sync.Cond
@@ -62,13 +64,15 @@ type Drone struct {
 // New creates a new Drone
 func New() *Drone {
 	return &Drone{
-		d:  astievent.NewDispatcher(),
-		mc: &sync.Mutex{},
-		ms: &sync.Mutex{},
-		ol: &sync.Once{},
-		oo: &sync.Once{},
-		rc: sync.NewCond(&sync.Mutex{}),
-		s:  &State{},
+		cmds: make(map[*cmd]bool),
+		d:    astievent.NewDispatcher(),
+		mc:   &sync.Mutex{},
+		msc:  &sync.Mutex{},
+		ms:   &sync.Mutex{},
+		ol:   &sync.Once{},
+		oo:   &sync.Once{},
+		rc:   sync.NewCond(&sync.Mutex{}),
+		s:    &State{},
 	}
 }
 
@@ -99,6 +103,9 @@ func (d *Drone) Disconnect() {
 		// Stop and reset dispatcher
 		d.d.Stop()
 		d.d.Reset()
+
+		// Reset cmds
+		d.cmds = make(map[*cmd]bool)
 
 		// Close connections
 		if d.cmdConn != nil {
@@ -364,22 +371,57 @@ type cmd struct {
 	timeout   time.Duration
 }
 
-func (d *Drone) sendCmd(cmd cmd) (err error) {
-	// If the cmd is not a canceller, we don't want to send it at the same time as other cmds
-	if !cmd.canceller {
-		d.mc.Lock()
-		defer d.mc.Unlock()
-	}
-
-	// Lock resp
-	d.rc.L.Lock()
-	defer d.rc.L.Unlock()
-
+func (d *Drone) sendCmd(cmd *cmd) (err error) {
 	// No connection
 	if d.cmdConn == nil {
 		err = ErrNotConnected
 		return
 	}
+
+	// In most cases we need to wait for the previous cmd to be done. But not all.
+	// This is a priority cmd if cmd is a canceller and no other canceller is running
+	d.mc.Lock()
+	var priority bool
+	if cmd.canceller {
+		priority = true
+		for p := range d.cmds {
+			if p.canceller {
+				priority = false
+				break
+			}
+
+			// Takeoff and land can't be sent at the same time
+			if cmd.cmd == "land" && p.cmd == "takeoff" {
+				priority = false
+				break
+			}
+		}
+	}
+	d.cmds[cmd] = true
+	d.mc.Unlock()
+
+	// Make sure to remove cmd
+	defer func() {
+		d.mc.Lock()
+		delete(d.cmds, cmd)
+		d.mc.Unlock()
+	}()
+
+	// Not a priority cmd
+	if !priority {
+		// Check context
+		if err = d.ctx.Err(); err != nil {
+			return
+		}
+
+		// Make sure not to send several cmds at the same time
+		d.msc.Lock()
+		defer d.msc.Unlock()
+	}
+
+	// Lock resp
+	d.rc.L.Lock()
+	defer d.rc.L.Unlock()
 
 	// Log
 	astilog.Debugf("astitello: sending cmd '%s'", cmd.cmd)
@@ -437,7 +479,7 @@ func (d *Drone) sendCmd(cmd cmd) (err error) {
 
 func (d *Drone) command() (err error) {
 	// Send "command" cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     "command",
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
@@ -451,7 +493,7 @@ func (d *Drone) command() (err error) {
 // StartVideo makes Tello start streaming video
 func (d *Drone) StartVideo() (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     "streamon",
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
@@ -465,7 +507,7 @@ func (d *Drone) StartVideo() (err error) {
 // StopVideo makes Tello stop streaming video
 func (d *Drone) StopVideo() (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     "streamoff",
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
@@ -480,7 +522,7 @@ func (d *Drone) StopVideo() (err error) {
 // This cmd doesn't seem to be receiving any response, that's why we don't provide any handler
 func (d *Drone) Emergency() (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		canceller: true,
 		cmd:       "emergency",
 		timeout:   defaultTimeout,
@@ -494,7 +536,7 @@ func (d *Drone) Emergency() (err error) {
 // TakeOff makes Tello auto takeoff
 func (d *Drone) TakeOff() (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: "takeoff",
 		h:   d.respHandlerWithEvent(TakeOffEvent),
 	}); err != nil {
@@ -507,7 +549,7 @@ func (d *Drone) TakeOff() (err error) {
 // Land makes Tello auto land
 func (d *Drone) Land() (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		canceller: true,
 		cmd:       "land",
 		h:         d.respHandlerWithEvent(LandEvent),
@@ -521,7 +563,7 @@ func (d *Drone) Land() (err error) {
 // Up makes Tello fly up with distance x cm
 func (d *Drone) Up(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("up %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -534,7 +576,7 @@ func (d *Drone) Up(x int) (err error) {
 // Down makes Tello fly down with distance x cm
 func (d *Drone) Down(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("down %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -547,7 +589,7 @@ func (d *Drone) Down(x int) (err error) {
 // Left makes Tello fly left with distance x cm
 func (d *Drone) Left(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("left %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -560,7 +602,7 @@ func (d *Drone) Left(x int) (err error) {
 // Right makes Tello fly right with distance x cm
 func (d *Drone) Right(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("right %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -573,7 +615,7 @@ func (d *Drone) Right(x int) (err error) {
 // Forward makes Tello fly forward with distance x cm
 func (d *Drone) Forward(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("forward %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -586,7 +628,7 @@ func (d *Drone) Forward(x int) (err error) {
 // Back makes Tello fly back with distance x cm
 func (d *Drone) Back(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("back %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -599,7 +641,7 @@ func (d *Drone) Back(x int) (err error) {
 // RotateClockwise makes Tello rotate x degree clockwise
 func (d *Drone) RotateClockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("cw %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -612,7 +654,7 @@ func (d *Drone) RotateClockwise(x int) (err error) {
 // RotateCounterClockwise makes Tello rotate x degree counter-clockwise
 func (d *Drone) RotateCounterClockwise(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("ccw %d", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -626,7 +668,7 @@ func (d *Drone) RotateCounterClockwise(x int) (err error) {
 // Check out Flip... constants for available flip directions
 func (d *Drone) Flip(x string) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("flip %s", x),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -639,7 +681,7 @@ func (d *Drone) Flip(x string) (err error) {
 // Go makes Tello fly to x y z in speed (cm/s)
 func (d *Drone) Go(x, y, z, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("go %d %d %d %d", x, y, z, speed),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -652,7 +694,7 @@ func (d *Drone) Go(x, y, z, speed int) (err error) {
 // Curve makes Tello fly a curve defined by the current and two given coordinates with speed (cm/s)
 func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: fmt.Sprintf("curve %d %d %d %d %d %d %d", x1, y1, z1, x2, y2, z2, speed),
 		h:   defaultRespHandler,
 	}); err != nil {
@@ -671,7 +713,7 @@ func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 // This cmd doesn't seem to be receiving any response, that's why we don't provide any handler
 func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     fmt.Sprintf("rc %d %d %d %d", lr, fb, ud, y),
 		timeout: defaultTimeout,
 	}); err != nil {
@@ -686,7 +728,7 @@ func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 // If anyone manages to make it work, create an issue in github, I'm really interested in how you managed that :D
 func (d *Drone) SetWifi(ssid, password string) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     fmt.Sprintf("wifi %s %s", ssid, password),
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
@@ -701,7 +743,7 @@ func (d *Drone) SetWifi(ssid, password string) (err error) {
 func (d *Drone) Wifi() (snr int, err error) {
 	// Send cmd
 	// It returns "100.0"
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: "wifi?",
 		h: func(resp string) (err error) {
 			// Parse
@@ -722,7 +764,7 @@ func (d *Drone) Wifi() (snr int, err error) {
 // SetSpeed sets speed to x cm/s
 func (d *Drone) SetSpeed(x int) (err error) {
 	// Send cmd
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd:     fmt.Sprintf("speed %d", x),
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
@@ -737,7 +779,7 @@ func (d *Drone) SetSpeed(x int) (err error) {
 func (d *Drone) Speed() (x int, err error) {
 	// Send cmd
 	// It returns "100.0"
-	if err = d.sendCmd(cmd{
+	if err = d.sendCmd(&cmd{
 		cmd: "speed?",
 		h: func(resp string) (err error) {
 			// Parse

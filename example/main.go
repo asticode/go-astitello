@@ -95,19 +95,9 @@ func main() {
 			}
 		}
 
-		// Check context
-		if w.Context().Err() != nil {
-			return
-		}
-
 		// Take off
 		if err := d.TakeOff(); err != nil {
 			astilog.Error(errors.Wrap(err, "main: taking off failed"))
-			return
-		}
-
-		// Check context
-		if w.Context().Err() != nil {
 			return
 		}
 
@@ -120,19 +110,9 @@ func main() {
 		// Log state
 		astilog.Infof("main: state is: %+v", d.State())
 
-		// Check context
-		if w.Context().Err() != nil {
-			return
-		}
-
 		// Land
 		if err := d.Land(); err != nil {
 			astilog.Error(errors.Wrap(err, "main: landing failed"))
-			return
-		}
-
-		// Check context
-		if w.Context().Err() != nil {
 			return
 		}
 
