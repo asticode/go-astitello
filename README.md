@@ -43,7 +43,7 @@ $ go run example/main.go
 
 5) Watch your drone take off, make a flip to its right and land! Make sure to look at the terminal output too, some valuable information were printed there!
 
-6) If you've installed `ffmpeg` you should also see a new file called `example.mp4`. Check it out!
+6) If you've installed `ffmpeg` you should also see a new file called `example.ts`. Check it out!
 
 # Use it in your code
 
