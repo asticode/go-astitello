@@ -371,17 +371,12 @@ type cmd struct {
 	timeout   time.Duration
 }
 
-func (d *Drone) sendCmd(cmd *cmd) (err error) {
-	// No connection
-	if d.cmdConn == nil {
-		err = ErrNotConnected
-		return
-	}
-
-	// In most cases we need to wait for the previous cmd to be done. But not when this is a priority cmd.
-	// This is a priority cmd if cmd is a canceller and no other canceller is running
+func (d *Drone) priorityCmd(cmd *cmd) (priority bool) {
+	// Lock
 	d.mc.Lock()
-	var priority bool
+	defer d.mc.Unlock()
+
+	// Check
 	if cmd.canceller {
 		priority = true
 		for p := range d.cmds {
@@ -397,6 +392,22 @@ func (d *Drone) sendCmd(cmd *cmd) (err error) {
 			}
 		}
 	}
+	return
+}
+
+func (d *Drone) sendCmd(cmd *cmd) (err error) {
+	// No connection
+	if d.cmdConn == nil {
+		err = ErrNotConnected
+		return
+	}
+
+	// In most cases we need to wait for the previous cmd to be done. But not when this is a priority cmd.
+	// This is a priority cmd if cmd is a canceller and no other canceller is running
+	priority := d.priorityCmd(cmd)
+
+	// Add cmd
+	d.mc.Lock()
 	d.cmds[cmd] = true
 	d.mc.Unlock()
 

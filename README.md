@@ -117,4 +117,4 @@ If you'd rather use a library that is based on an official documentation, you've
 
 # Known problems with the SDK
 
-- sometimes a cmd doesn't get any response back from the SDK. In that case the cmd will idle until its timeout is reached
+- sometimes a cmd doesn't get any response back from the SDK. In that case the cmd will idle until its timeout is reached.
