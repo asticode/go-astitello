@@ -60,11 +60,11 @@ astilog.SetDefaultLogger()
 // Create the drone
 d := astitello.New()
 
-// Connect to the drone
-d.Connect()
+// Start the drone
+d.Start()
 
-// Make sure to disconnect once everything is over
-defer d.Disconnect()
+// Make sure to close the drone once everything is over
+defer d.Close()
 ```
 
 ## Basic commands

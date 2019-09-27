@@ -78,12 +78,12 @@ func main() {
 	// Handle take off event
 	d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Warn("main: drone has took off!") })
 
-	// Connect to the drone
-	if err := d.Connect(); err != nil {
-		astilog.Error(errors.Wrap(err, "main: connecting to the drone failed"))
+	// Start the drone
+	if err := d.Start(); err != nil {
+		astilog.Error(errors.Wrap(err, "main: starting to the drone failed"))
 		return
 	}
-	defer d.Disconnect()
+	defer d.Close()
 
 	// Execute in a task
 	w.NewTask().Do(func() {
@@ -101,8 +101,8 @@ func main() {
 			return
 		}
 
-		// Right
-		if err := d.Right(50); err != nil {
+		// Flip
+		if err := d.Flip(astitello.FlipRight); err != nil {
 			astilog.Error(errors.Wrap(err, "main: flipping failed"))
 			return
 		}

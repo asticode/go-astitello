@@ -182,11 +182,11 @@ func TestDrone(t *testing.T) {
 		s.close()
 	}()
 
-	// Connect
-	if err = d.Connect(); err != nil {
-		t.Error(errors.Wrap(err, "test: connecting to drone failed"))
+	// Start
+	if err = d.Start(); err != nil {
+		t.Error(errors.Wrap(err, "test: starting the drone failed"))
 	}
-	defer d.Disconnect()
+	defer d.Close()
 
 	// Handle events
 	me := &sync.Mutex{} // Locks events
