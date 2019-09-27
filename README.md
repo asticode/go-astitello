@@ -114,3 +114,7 @@ First off, I'd like to say there are very nice DJI Tello libraries out there suc
 Unfortunately they seem to rely on reverse-engineering the official app which is undocumented.
 
 If you'd rather use a library that is based on an official documentation, you've come to the right place!
+
+# Known problems with the SDK
+
+- sometimes a cmd doesn't get any response back from the SDK. In that case the cmd will idle until its timeout is reached
