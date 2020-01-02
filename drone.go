@@ -84,7 +84,7 @@ func (d *Drone) State() State {
 }
 
 // On adds an event handler
-func (d *Drone) On(name string, h astikit.EventHandler) {
+func (d *Drone) On(name string, h astikit.EventerHandler) {
 	d.e.On(name, h)
 }
 
@@ -208,7 +208,7 @@ func (d *Drone) readState() {
 }
 
 // StateEventHandler returns the proper EventHandler for the State event
-func StateEventHandler(f func(s State)) astikit.EventHandler {
+func StateEventHandler(f func(s State)) astikit.EventerHandler {
 	return func(payload interface{}) {
 		f(payload.(State))
 	}
@@ -273,7 +273,7 @@ func (d *Drone) readVideo() {
 }
 
 // VideoPacketEventHandler returns the proper EventHandler for the VideoPacket event
-func VideoPacketEventHandler(f func(p []byte)) astikit.EventHandler {
+func VideoPacketEventHandler(f func(p []byte)) astikit.EventerHandler {
 	return func(payload interface{}) {
 		f(payload.([]byte))
 	}
