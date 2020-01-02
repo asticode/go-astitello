@@ -1,18 +1,13 @@
 package astitello
 
 import (
-	"net"
-	"testing"
-
-	"context"
-
-	"time"
-
-	"sync"
-
-	"reflect"
-
 	"bytes"
+	"context"
+	"net"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
 
 	"github.com/pkg/errors"
 )

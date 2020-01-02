@@ -2,13 +2,12 @@ package main
 
 import (
 	"flag"
+	"io"
 	"os/exec"
 
-	"io"
-
+	"github.com/asticode/go-astikit"
 	"github.com/asticode/go-astilog"
 	"github.com/asticode/go-astitello"
-	astiworker "github.com/asticode/go-astitools/worker"
 	"github.com/pkg/errors"
 )
 
@@ -18,13 +17,13 @@ func main() {
 	astilog.SetLogger(astilog.New(astilog.FlagConfig()))
 
 	// Create worker
-	w := astiworker.NewWorker()
+	w := astikit.NewWorker(astikit.WorkerOptions{Logger: astilog.GetLogger()})
 
 	// Create the drone
 	d := astitello.New()
 
 	// Handle signals
-	w.HandleSignals(astiworker.TermSignalHandler(func() {
+	w.HandleSignals(astikit.TermSignalHandler(func() {
 		// Make sure to land on term signal
 		if err := d.Land(); err != nil {
 			astilog.Error(errors.Wrap(err, "main: landing failed"))
@@ -37,9 +36,9 @@ func main() {
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
 		// Execute ffmpeg
 		var in io.WriteCloser
-		if _, err = w.Exec(astiworker.ExecOptions{
+		if _, err = astikit.ExecCmd(w, astikit.ExecCmdOptions{
 			Args: []string{"-y", "-i", "pipe:0", "example.ts"},
-			CmdAdapter: func(cmd *exec.Cmd, h astiworker.ExecHandler) (err error) {
+			CmdAdapter: func(cmd *exec.Cmd, h *astikit.ExecHandler) (err error) {
 				// Pipe stdin
 				if in, err = cmd.StdinPipe(); err != nil {
 					err = errors.Wrap(err, "main: piping stdin failed")
@@ -49,7 +48,7 @@ func main() {
 				// Handle new video packets
 				d.On(astitello.VideoPacketEvent, astitello.VideoPacketEventHandler(func(p []byte) {
 					// Check status
-					if h.Status() != astiworker.StatusRunning {
+					if h.Status() != astikit.ExecStatusRunning {
 						return
 					}
 

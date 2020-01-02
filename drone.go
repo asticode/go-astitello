@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/asticode/go-astikit"
 	"github.com/asticode/go-astilog"
-	astievent "github.com/asticode/go-astitools/event"
 	"github.com/pkg/errors"
 )
 
@@ -48,7 +48,7 @@ type Drone struct {
 	cmdConn   *net.UDPConn
 	cmds      map[*cmd]bool
 	ctx       context.Context
-	d         *astievent.Dispatcher
+	e         *astikit.Eventer
 	lr        string
 	mc        *sync.Mutex // Locks cmds
 	ms        *sync.Mutex // Locks s
@@ -65,7 +65,7 @@ type Drone struct {
 func New() *Drone {
 	return &Drone{
 		cmds: make(map[*cmd]bool),
-		d:    astievent.NewDispatcher(),
+		e:    astikit.NewEventer(astikit.EventerOptions{}),
 		mc:   &sync.Mutex{},
 		msc:  &sync.Mutex{},
 		ms:   &sync.Mutex{},
@@ -84,8 +84,8 @@ func (d *Drone) State() State {
 }
 
 // On adds an event handler
-func (d *Drone) On(name string, h astievent.EventHandler) {
-	d.d.On(name, h)
+func (d *Drone) On(name string, h astikit.EventHandler) {
+	d.e.On(name, h)
 }
 
 // Close closes the drone properly
@@ -100,9 +100,9 @@ func (d *Drone) Close() {
 		// Reset once
 		d.oo = &sync.Once{}
 
-		// Stop and reset dispatcher
-		d.d.Stop()
-		d.d.Reset()
+		// Stop and reset eventer
+		d.e.Stop()
+		d.e.Reset()
 
 		// Reset cmds
 		d.cmds = make(map[*cmd]bool)
@@ -130,8 +130,8 @@ func (d *Drone) Start() (err error) {
 		// Reset once
 		d.ol = &sync.Once{}
 
-		// Start dispatcher
-		go d.d.Start(d.ctx)
+		// Start eventer
+		go d.e.Start(d.ctx)
 
 		// Handle state
 		if err = d.handleState(); err != nil {
@@ -203,12 +203,12 @@ func (d *Drone) readState() {
 		d.ms.Unlock()
 
 		// Dispatch
-		d.d.Dispatch(StateEvent, s)
+		d.e.Dispatch(StateEvent, s)
 	}
 }
 
 // StateEventHandler returns the proper EventHandler for the State event
-func StateEventHandler(f func(s State)) astievent.EventHandler {
+func StateEventHandler(f func(s State)) astikit.EventHandler {
 	return func(payload interface{}) {
 		f(payload.(State))
 	}
@@ -264,7 +264,7 @@ func (d *Drone) readVideo() {
 		// Dispatch
 		p := make([]byte, bufLength)
 		copy(p, buf[:bufLength])
-		d.d.Dispatch(VideoPacketEvent, p)
+		d.e.Dispatch(VideoPacketEvent, p)
 
 		// Reset buffer
 		buf = buf[:0]
@@ -273,7 +273,7 @@ func (d *Drone) readVideo() {
 }
 
 // VideoPacketEventHandler returns the proper EventHandler for the VideoPacket event
-func VideoPacketEventHandler(f func(p []byte)) astievent.EventHandler {
+func VideoPacketEventHandler(f func(p []byte)) astikit.EventHandler {
 	return func(payload interface{}) {
 		f(payload.([]byte))
 	}
@@ -359,7 +359,7 @@ func (d *Drone) respHandlerWithEvent(name string) respHandler {
 		}
 
 		// Dispatch
-		d.d.Dispatch(name, nil)
+		d.e.Dispatch(name, nil)
 		return
 	}
 }
