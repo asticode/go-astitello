@@ -2,8 +2,6 @@ package astitello
 
 import (
 	"fmt"
-
-	"github.com/pkg/errors"
 )
 
 // State represents the drone's state
@@ -44,7 +42,7 @@ type Speed struct {
 func newState(i string) (s State, err error) {
 	var n int
 	if n, err = fmt.Sscanf(i, "pitch:%d;roll:%d;yaw:%d;vgx:%d;vgy:%d;vgz:%d;templ:%d;temph:%d;tof:%d;h:%d;bat:%d;baro:%f;time:%d;agx:%f;agy:%f;agz:%f;", &s.Attitude.Pitch, &s.Attitude.Roll, &s.Attitude.Yaw, &s.Speed.X, &s.Speed.Y, &s.Speed.Z, &s.LowestTemperature, &s.HighestTemperature, &s.FlightDistance, &s.Height, &s.Battery, &s.Barometer, &s.FlightTime, &s.Acceleration.X, &s.Acceleration.Y, &s.Acceleration.Z); err != nil {
-		err = errors.Wrap(err, "astitello: scanf failed")
+		err = fmt.Errorf("astitello: scanf failed: %w", err)
 		return
 	} else if n != 16 {
 		err = fmt.Errorf("astitello: scanf only parsed %d items, expected 10", n)

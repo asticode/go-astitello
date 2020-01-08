@@ -3,6 +3,7 @@ package astitello
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -10,8 +11,6 @@ import (
 	"time"
 
 	"github.com/asticode/go-astikit"
-	"github.com/asticode/go-astilog"
-	"github.com/pkg/errors"
 )
 
 // Defaults
@@ -49,6 +48,7 @@ type Drone struct {
 	cmds      map[*cmd]bool
 	ctx       context.Context
 	e         *astikit.Eventer
+	l         astikit.SeverityLogger
 	lr        string
 	mc        *sync.Mutex // Locks cmds
 	ms        *sync.Mutex // Locks s
@@ -62,10 +62,11 @@ type Drone struct {
 }
 
 // New creates a new Drone
-func New() *Drone {
+func New(l astikit.StdLogger) *Drone {
 	return &Drone{
 		cmds: make(map[*cmd]bool),
 		e:    astikit.NewEventer(astikit.EventerOptions{}),
+		l:    astikit.AdaptStdLogger(l),
 		mc:   &sync.Mutex{},
 		msc:  &sync.Mutex{},
 		ms:   &sync.Mutex{},
@@ -135,19 +136,19 @@ func (d *Drone) Start() (err error) {
 
 		// Handle state
 		if err = d.handleState(); err != nil {
-			err = errors.Wrap(err, "astitello: handling state failed")
+			err = fmt.Errorf("astitello: handling state failed: %w", err)
 			return
 		}
 
 		// Handle video
 		if err = d.handleVideo(); err != nil {
-			err = errors.Wrap(err, "astitello: handling video failed")
+			err = fmt.Errorf("astitello: handling video failed: %w", err)
 			return
 		}
 
 		// Handle commands
 		if err = d.handleCmds(); err != nil {
-			err = errors.Wrap(err, "astitello: handling commands failed")
+			err = fmt.Errorf("astitello: handling commands failed: %w", err)
 			return
 		}
 	})
@@ -158,13 +159,13 @@ func (d *Drone) handleState() (err error) {
 	// Create laddr
 	var laddr *net.UDPAddr
 	if laddr, err = net.ResolveUDPAddr("udp", stateAddr); err != nil {
-		err = errors.Wrap(err, "astitello: creating laddr failed")
+		err = fmt.Errorf("astitello: creating laddr failed: %w", err)
 		return
 	}
 
 	// Listen
 	if d.stateConn, err = net.ListenUDP("udp", laddr); err != nil {
-		err = errors.Wrap(err, "astitello: listening failed")
+		err = fmt.Errorf("astitello: listening failed: %w", err)
 		return
 	}
 
@@ -185,7 +186,7 @@ func (d *Drone) readState() {
 		n, err := d.stateConn.Read(b)
 		if err != nil {
 			if d.ctx.Err() == nil {
-				astilog.Error(errors.Wrap(err, "astitello: reading state failed"))
+				d.l.Error(fmt.Errorf("astitello: reading state failed: %w", err))
 			}
 			continue
 		}
@@ -193,7 +194,7 @@ func (d *Drone) readState() {
 		// Create state
 		s, err := newState(string(bytes.TrimSpace(b[:n])))
 		if err != nil {
-			astilog.Error(errors.Wrap(err, "astitello: creating state failed"))
+			d.l.Error(fmt.Errorf("astitello: creating state failed: %w", err))
 			continue
 		}
 
@@ -218,13 +219,13 @@ func (d *Drone) handleVideo() (err error) {
 	// Create laddr
 	var laddr *net.UDPAddr
 	if laddr, err = net.ResolveUDPAddr("udp", videoAddr); err != nil {
-		err = errors.Wrap(err, "astitello: creating laddr failed")
+		err = fmt.Errorf("astitello: creating laddr failed: %w", err)
 		return
 	}
 
 	// Listen
 	if d.videoConn, err = net.ListenUDP("udp", laddr); err != nil {
-		err = errors.Wrap(err, "astitello: listening failed")
+		err = fmt.Errorf("astitello: listening failed: %w", err)
 		return
 	}
 
@@ -247,7 +248,7 @@ func (d *Drone) readVideo() {
 		n, err := d.videoConn.Read(b)
 		if err != nil {
 			if d.ctx.Err() == nil {
-				astilog.Error(errors.Wrap(err, "astitello: reading video failed"))
+				d.l.Error(fmt.Errorf("astitello: reading video failed: %w", err))
 			}
 			continue
 		}
@@ -283,20 +284,20 @@ func (d *Drone) handleCmds() (err error) {
 	// Create raddr
 	var raddr *net.UDPAddr
 	if raddr, err = net.ResolveUDPAddr("udp", cmdAddr); err != nil {
-		err = errors.Wrap(err, "astitello: creating raddr failed")
+		err = fmt.Errorf("astitello: creating raddr failed: %w", err)
 		return
 	}
 
 	// Create laddr
 	var laddr *net.UDPAddr
 	if laddr, err = net.ResolveUDPAddr("udp", respAddr); err != nil {
-		err = errors.Wrap(err, "astitello: creating laddr failed")
+		err = fmt.Errorf("astitello: creating laddr failed: %w", err)
 		return
 	}
 
 	// Dial
 	if d.cmdConn, err = net.DialUDP("udp", laddr, raddr); err != nil {
-		err = errors.Wrap(err, "astitello: dialing failed")
+		err = fmt.Errorf("astitello: dialing failed: %w", err)
 		return
 	}
 
@@ -305,7 +306,7 @@ func (d *Drone) handleCmds() (err error) {
 
 	// Command
 	if err = d.command(); err != nil {
-		err = errors.Wrap(err, "astitello: command failed")
+		err = fmt.Errorf("astitello: command failed: %w", err)
 		return
 	}
 	return
@@ -323,14 +324,14 @@ func (d *Drone) readResponses() {
 		n, err := d.cmdConn.Read(b)
 		if err != nil {
 			if d.ctx.Err() == nil {
-				astilog.Error(errors.Wrap(err, "astitello: reading response failed"))
+				d.l.Error(fmt.Errorf("astitello: reading response failed: %w", err))
 			}
 			continue
 		}
 
 		// Log
 		r := bytes.TrimSpace(b[:n])
-		astilog.Debugf("astitello: received resp '%s'", r)
+		d.l.Debugf("astitello: received resp '%s'", r)
 
 		// Signal
 		d.rc.L.Lock()
@@ -345,7 +346,7 @@ type respHandler func(resp string) error
 func defaultRespHandler(resp string) (err error) {
 	// Check response
 	if resp != "ok" {
-		err = errors.Wrap(errors.New(resp), "astitello: invalid response")
+		err = fmt.Errorf("astitello: invalid response: %w", errors.New(resp))
 		return
 	}
 	return
@@ -435,11 +436,11 @@ func (d *Drone) sendCmd(cmd *cmd) (err error) {
 	defer d.rc.L.Unlock()
 
 	// Log
-	astilog.Debugf("astitello: sending cmd '%s'", cmd.cmd)
+	d.l.Debugf("astitello: sending cmd '%s'", cmd.cmd)
 
 	// Write
 	if _, err = d.cmdConn.Write([]byte(cmd.cmd)); err != nil {
-		err = errors.Wrap(err, "astitello: writing failed")
+		err = fmt.Errorf("astitello: writing failed: %w", err)
 		return
 	}
 
@@ -482,7 +483,7 @@ func (d *Drone) sendCmd(cmd *cmd) (err error) {
 
 	// Custom
 	if err = cmd.h(d.lr); err != nil {
-		err = errors.Wrap(err, "astitello: custom handler failed")
+		err = fmt.Errorf("astitello: custom handler failed: %w", err)
 		return
 	}
 	return
@@ -495,7 +496,7 @@ func (d *Drone) command() (err error) {
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending 'command' cmd failed")
+		err = fmt.Errorf("astitello: sending 'command' cmd failed: %w", err)
 		return
 	}
 	return
@@ -509,7 +510,7 @@ func (d *Drone) StartVideo() (err error) {
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending streamon cmd failed")
+		err = fmt.Errorf("astitello: sending streamon cmd failed: %w", err)
 		return
 	}
 	return
@@ -523,7 +524,7 @@ func (d *Drone) StopVideo() (err error) {
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending streamoff cmd failed")
+		err = fmt.Errorf("astitello: sending streamoff cmd failed: %w", err)
 		return
 	}
 	return
@@ -538,7 +539,7 @@ func (d *Drone) Emergency() (err error) {
 		cmd:       "emergency",
 		timeout:   defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending emergency cmd failed")
+		err = fmt.Errorf("astitello: sending emergency cmd failed: %w", err)
 		return
 	}
 	return
@@ -552,7 +553,7 @@ func (d *Drone) TakeOff() (err error) {
 		h:       d.respHandlerWithEvent(TakeOffEvent),
 		timeout: 20 * time.Second,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending takeoff cmd failed")
+		err = fmt.Errorf("astitello: sending takeoff cmd failed: %w", err)
 		return
 	}
 	return
@@ -567,7 +568,7 @@ func (d *Drone) Land() (err error) {
 		h:         d.respHandlerWithEvent(LandEvent),
 		timeout:   20 * time.Second,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending land cmd failed")
+		err = fmt.Errorf("astitello: sending land cmd failed: %w", err)
 		return
 	}
 	return
@@ -581,7 +582,7 @@ func (d *Drone) Up(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending up cmd failed")
+		err = fmt.Errorf("astitello: sending up cmd failed: %w", err)
 		return
 	}
 	return
@@ -595,7 +596,7 @@ func (d *Drone) Down(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending down cmd failed")
+		err = fmt.Errorf("astitello: sending down cmd failed: %w", err)
 		return
 	}
 	return
@@ -609,7 +610,7 @@ func (d *Drone) Left(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending left cmd failed")
+		err = fmt.Errorf("astitello: sending left cmd failed: %w", err)
 		return
 	}
 	return
@@ -623,7 +624,7 @@ func (d *Drone) Right(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending right cmd failed")
+		err = fmt.Errorf("astitello: sending right cmd failed: %w", err)
 		return
 	}
 	return
@@ -637,7 +638,7 @@ func (d *Drone) Forward(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending forward cmd failed")
+		err = fmt.Errorf("astitello: sending forward cmd failed: %w", err)
 		return
 	}
 	return
@@ -651,7 +652,7 @@ func (d *Drone) Back(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending back cmd failed")
+		err = fmt.Errorf("astitello: sending back cmd failed: %w", err)
 		return
 	}
 	return
@@ -665,7 +666,7 @@ func (d *Drone) RotateClockwise(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending cw cmd failed")
+		err = fmt.Errorf("astitello: sending cw cmd failed: %w", err)
 		return
 	}
 	return
@@ -679,7 +680,7 @@ func (d *Drone) RotateCounterClockwise(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending ccw cmd failed")
+		err = fmt.Errorf("astitello: sending ccw cmd failed: %w", err)
 		return
 	}
 	return
@@ -694,7 +695,7 @@ func (d *Drone) Flip(x string) (err error) {
 		h:       defaultRespHandler,
 		timeout: 20 * time.Second,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending flip cmd failed")
+		err = fmt.Errorf("astitello: sending flip cmd failed: %w", err)
 		return
 	}
 	return
@@ -708,7 +709,7 @@ func (d *Drone) Go(x, y, z, speed int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending go cmd failed")
+		err = fmt.Errorf("astitello: sending go cmd failed: %w", err)
 		return
 	}
 	return
@@ -722,7 +723,7 @@ func (d *Drone) Curve(x1, y1, z1, x2, y2, z2, speed int) (err error) {
 		h:       defaultRespHandler,
 		timeout: time.Minute,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending go cmd failed")
+		err = fmt.Errorf("astitello: sending go cmd failed: %w", err)
 		return
 	}
 	return
@@ -741,7 +742,7 @@ func (d *Drone) SetSticks(lr, fb, ud, y int) (err error) {
 		cmd:     fmt.Sprintf("rc %d %d %d %d", lr, fb, ud, y),
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending rc cmd failed")
+		err = fmt.Errorf("astitello: sending rc cmd failed: %w", err)
 		return
 	}
 	return
@@ -757,7 +758,7 @@ func (d *Drone) SetWifi(ssid, password string) (err error) {
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending wifi cmd failed")
+		err = fmt.Errorf("astitello: sending wifi cmd failed: %w", err)
 		return
 	}
 	return
@@ -772,14 +773,14 @@ func (d *Drone) Wifi() (snr int, err error) {
 		h: func(resp string) (err error) {
 			// Parse
 			if snr, err = strconv.Atoi(resp); err != nil {
-				err = errors.Wrapf(err, "astitello: atoi %s failed", resp)
+				err = fmt.Errorf("astitello: atoi %s failed: %w", resp, err)
 				return
 			}
 			return
 		},
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending wifi? cmd failed")
+		err = fmt.Errorf("astitello: sending wifi? cmd failed: %w", err)
 		return
 	}
 	return
@@ -793,7 +794,7 @@ func (d *Drone) SetSpeed(x int) (err error) {
 		h:       defaultRespHandler,
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending speed cmd failed")
+		err = fmt.Errorf("astitello: sending speed cmd failed: %w", err)
 		return
 	}
 	return
@@ -809,7 +810,7 @@ func (d *Drone) Speed() (x int, err error) {
 			// Parse
 			var f float64
 			if f, err = strconv.ParseFloat(resp, 64); err != nil {
-				err = errors.Wrapf(err, "astitello: parsing float %s failed", resp)
+				err = fmt.Errorf("astitello: parsing float %s failed: %w", resp, err)
 				return
 			}
 
@@ -819,7 +820,7 @@ func (d *Drone) Speed() (x int, err error) {
 		},
 		timeout: defaultTimeout,
 	}); err != nil {
-		err = errors.Wrap(err, "astitello: sending speed? cmd failed")
+		err = fmt.Errorf("astitello: sending speed? cmd failed: %w", err)
 		return
 	}
 	return

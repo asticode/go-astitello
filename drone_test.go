@@ -3,13 +3,13 @@ package astitello
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 var (
@@ -46,20 +46,20 @@ func (d *dialer) start() (err error) {
 	// Create raddr
 	var raddr *net.UDPAddr
 	if raddr, err = net.ResolveUDPAddr("udp", d.raddr); err != nil {
-		err = errors.Wrap(err, "test: creating raddr failed")
+		err = fmt.Errorf("test: creating raddr failed: %w", err)
 		return
 	}
 
 	// Create laddr
 	var laddr *net.UDPAddr
 	if laddr, err = net.ResolveUDPAddr("udp", d.laddr); err != nil {
-		err = errors.Wrap(err, "test: creating laddr failed")
+		err = fmt.Errorf("test: creating laddr failed: %w", err)
 		return
 	}
 
 	// Dial
 	if d.conn, err = net.DialUDP("udp", laddr, raddr); err != nil {
-		err = errors.Wrap(err, "test: dialing failed")
+		err = fmt.Errorf("test: dialing failed: %w", err)
 		return
 	}
 
@@ -76,7 +76,7 @@ func (d *dialer) start() (err error) {
 			n, err := d.conn.Read(b)
 			if err != nil {
 				if d.ctx.Err() == nil {
-					d.t.Log(errors.Wrap(err, "test: reading failed"))
+					d.t.Log(fmt.Errorf("test: reading failed: %w", err))
 				}
 				continue
 			}
@@ -90,7 +90,7 @@ func (d *dialer) start() (err error) {
 				if r := d.h(b[:n]); len(r) > 0 {
 					if _, err := d.conn.Write(r); err != nil {
 						d.mt.Unlock()
-						d.t.Log(errors.Wrap(err, "test: writing failed"))
+						d.t.Log(fmt.Errorf("test: writing failed: %w", err))
 						return
 					}
 				}
@@ -134,7 +134,7 @@ func setup(t *testing.T) (d *Drone, c, s, v *dialer, err error) {
 
 	// Start cmd listener
 	if err = c.start(); err != nil {
-		err = errors.Wrap(err, "test: starting cmd listener failed")
+		err = fmt.Errorf("test: starting cmd listener failed: %w", err)
 		return
 	}
 
@@ -143,7 +143,7 @@ func setup(t *testing.T) (d *Drone, c, s, v *dialer, err error) {
 
 	// Start state dialer
 	if err = s.start(); err != nil {
-		err = errors.Wrap(err, "test: starting state dialer failed")
+		err = fmt.Errorf("test: starting state dialer failed: %w", err)
 		return
 	}
 
@@ -152,7 +152,7 @@ func setup(t *testing.T) (d *Drone, c, s, v *dialer, err error) {
 
 	// Start video dialer
 	if err = v.start(); err != nil {
-		err = errors.Wrap(err, "test: starting video dialer failed")
+		err = fmt.Errorf("test: starting video dialer failed: %w", err)
 		return
 	}
 
@@ -160,7 +160,7 @@ func setup(t *testing.T) (d *Drone, c, s, v *dialer, err error) {
 	cmdAddr = c.conn.LocalAddr().String()
 
 	// Create drone
-	d = New()
+	d = New(nil)
 	return
 }
 
@@ -168,7 +168,7 @@ func TestDrone(t *testing.T) {
 	// Set up
 	d, c, s, v, err := setup(t)
 	if err != nil {
-		t.Error(errors.Wrap(err, "test: setting up failed"))
+		t.Error(fmt.Errorf("test: setting up failed: %w", err))
 	}
 
 	// Make sure to close everything properly
@@ -179,7 +179,7 @@ func TestDrone(t *testing.T) {
 
 	// Start
 	if err = d.Start(); err != nil {
-		t.Error(errors.Wrap(err, "test: starting the drone failed"))
+		t.Error(fmt.Errorf("test: starting the drone failed: %w", err))
 	}
 	defer d.Close()
 
@@ -212,14 +212,14 @@ func TestDrone(t *testing.T) {
 		func() error { return d.StopVideo() },
 	} {
 		if err = f(); err != nil {
-			t.Error(errors.Wrapf(err, "err %d should be nil", idx))
+			t.Error(fmt.Errorf("err %d should be nil", idx))
 		}
 	}
 
 	// Wifi
 	var snr int
 	if snr, err = d.Wifi(); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
+		t.Error(fmt.Errorf("err should be nil"))
 	} else if snr != 100 {
 		t.Errorf("expected 100, got %d", snr)
 	}
@@ -227,7 +227,7 @@ func TestDrone(t *testing.T) {
 	// Speed
 	var speed int
 	if speed, err = d.Speed(); err != nil {
-		t.Error(errors.Wrap(err, "err should be nil"))
+		t.Error(fmt.Errorf("err should be nil"))
 	} else if snr != 100 {
 		t.Errorf("expected 100, got %d", speed)
 	}
@@ -248,7 +248,7 @@ func TestDrone(t *testing.T) {
 	c.mt.Lock()
 	c.timeout = true
 	c.mt.Unlock()
-	if err = d.command(); err == nil || errors.Cause(err) != context.DeadlineExceeded {
+	if err = d.command(); err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error should be %s", context.DeadlineExceeded)
 	}
 	c.mt.Lock()
@@ -309,12 +309,12 @@ func handleEvents(t *testing.T, d *Drone, tookOff, landed *bool, m *sync.Mutex) 
 func testEvents(t *testing.T, tookOff, landed *bool, wg *sync.WaitGroup, s, v *dialer, m *sync.Mutex) {
 	// Trigger state event
 	if _, err := s.conn.Write([]byte(strState)); err != nil {
-		t.Error(errors.Wrap(err, "test: writing state failed"))
+		t.Error(fmt.Errorf("test: writing state failed: %w", err))
 	}
 
 	// Trigger video event
 	if _, err := v.conn.Write([]byte("packet")); err != nil {
-		t.Error(errors.Wrap(err, "test: writing video packet failed"))
+		t.Error(fmt.Errorf("test: writing video packet failed: %w", err))
 	}
 
 	// Wait

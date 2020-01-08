@@ -1,32 +1,30 @@
 package main
 
 import (
-	"flag"
+	"fmt"
 	"io"
+	"log"
 	"os/exec"
 
 	"github.com/asticode/go-astikit"
-	"github.com/asticode/go-astilog"
 	"github.com/asticode/go-astitello"
-	"github.com/pkg/errors"
 )
 
 func main() {
-	// Set logger
-	flag.Parse()
-	astilog.SetLogger(astilog.New(astilog.FlagConfig()))
+	// Create logger
+	l := log.New(log.Writer(), log.Prefix(), log.Flags())
 
 	// Create worker
-	w := astikit.NewWorker(astikit.WorkerOptions{Logger: astilog.GetLogger()})
+	w := astikit.NewWorker(astikit.WorkerOptions{Logger: l})
 
 	// Create the drone
-	d := astitello.New()
+	d := astitello.New(l)
 
 	// Handle signals
 	w.HandleSignals(astikit.TermSignalHandler(func() {
 		// Make sure to land on term signal
 		if err := d.Land(); err != nil {
-			astilog.Error(errors.Wrap(err, "main: landing failed"))
+			l.Println(fmt.Errorf("main: landing failed: %w", err))
 			return
 		}
 	}))
@@ -41,7 +39,7 @@ func main() {
 			CmdAdapter: func(cmd *exec.Cmd, h *astikit.ExecHandler) (err error) {
 				// Pipe stdin
 				if in, err = cmd.StdinPipe(); err != nil {
-					err = errors.Wrap(err, "main: piping stdin failed")
+					err = fmt.Errorf("main: piping stdin failed: %w", err)
 					return
 				}
 
@@ -54,7 +52,7 @@ func main() {
 
 					// Write the packet in stdin
 					if _, err := in.Write(p); err != nil {
-						astilog.Error(errors.Wrap(err, "main: writing video packet failed"))
+						l.Println(fmt.Errorf("main: writing video packet failed: %w", err))
 						return
 					}
 				}))
@@ -62,7 +60,7 @@ func main() {
 			},
 			Name: "ffmpeg",
 		}); err != nil {
-			astilog.Error(errors.Wrap(err, "main: executing ffmpeg failed"))
+			l.Println(fmt.Errorf("main: executing ffmpeg failed: %w", err))
 			return
 		}
 		defer in.Close()
@@ -71,15 +69,15 @@ func main() {
 		video = true
 	} else {
 		// Log
-		astilog.Info("main: ffmpeg was not found, video won't be started")
+		l.Println("main: ffmpeg was not found, video won't be started")
 	}
 
 	// Handle take off event
-	d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Warn("main: drone has took off!") })
+	d.On(astitello.TakeOffEvent, func(interface{}) { l.Println("main: drone has took off!") })
 
 	// Start the drone
 	if err := d.Start(); err != nil {
-		astilog.Error(errors.Wrap(err, "main: starting to the drone failed"))
+		l.Println(fmt.Errorf("main: starting to the drone failed: %w", err))
 		return
 	}
 	defer d.Close()
@@ -89,36 +87,36 @@ func main() {
 		// Start video
 		if video {
 			if err := d.StartVideo(); err != nil {
-				astilog.Error(errors.Wrap(err, "main: starting video failed"))
+				l.Println(fmt.Errorf("main: starting video failed: %w", err))
 				return
 			}
 		}
 
 		// Take off
 		if err := d.TakeOff(); err != nil {
-			astilog.Error(errors.Wrap(err, "main: taking off failed"))
+			l.Println(fmt.Errorf("main: taking off failed: %w", err))
 			return
 		}
 
 		// Flip
 		if err := d.Flip(astitello.FlipRight); err != nil {
-			astilog.Error(errors.Wrap(err, "main: flipping failed"))
+			l.Println(fmt.Errorf("main: flipping failed: %w", err))
 			return
 		}
 
 		// Log state
-		astilog.Infof("main: state is: %+v", d.State())
+		l.Printf("main: state is: %+v\n", d.State())
 
 		// Land
 		if err := d.Land(); err != nil {
-			astilog.Error(errors.Wrap(err, "main: landing failed"))
+			l.Println(fmt.Errorf("main: landing failed: %w", err))
 			return
 		}
 
 		// Stop video
 		if video {
 			if err := d.StopVideo(); err != nil {
-				astilog.Error(errors.Wrap(err, "main: stopping video failed"))
+				l.Println(fmt.Errorf("main: stopping video failed: %w", err))
 				return
 			}
 		}

@@ -54,11 +54,11 @@ WARNING2: the code below doesn't list all available methods, be sure to check ou
 ## Set up the drone
 
 ```go
-// For now you need to set this logger
-astilog.SetDefaultLogger()
+// Create logger
+l := log.New(os.StdErr, "", 0)
 
 // Create the drone
-d := astitello.New()
+d := astitello.New(l)
 
 // Start the drone
 d.Start()
@@ -71,7 +71,7 @@ defer d.Close()
 
 ```go
 // Handle take off event
-d.On(astitello.TakeOffEvent, func(interface{}) { astilog.Info("drone has took off!") })
+d.On(astitello.TakeOffEvent, func(interface{}) { l.Println("drone has took off!") })
 
 // Take off
 d.TakeOff()
@@ -80,7 +80,7 @@ d.TakeOff()
 d.Flip(astitello.FlipRight)
 
 // Log state
-astilog.Infof("state is: %+v", d.State())
+l.Printf("state is: %+v\n", d.State())
 
 // In case you're using controllers, you can use set sticks positions directly
 d.SetSticks(-20, 10, -30, 40)
@@ -94,7 +94,7 @@ d.Land()
 ```go
 // Handle new video packet
 d.On(astitello.VideoPacketEvent, astitello.VideoPacketEventHandler(func(p []byte) {
-    astilog.Infof("video packet length: %d", len(p))
+    l.Printf("video packet length: %d\n", len(p))
 }))
 
 // Start video
