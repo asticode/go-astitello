@@ -1,6 +1,6 @@
 [![GoReportCard](http://goreportcard.com/badge/github.com/asticode/go-astitello)](http://goreportcard.com/report/github.com/asticode/go-astitello)
 [![GoDoc](https://godoc.org/github.com/asticode/go-astitello?status.svg)](https://godoc.org/github.com/asticode/go-astitello)
-[![Travis](https://travis-ci.org/asticode/go-astitello.svg?branch=master)](https://travis-ci.org/asticode/go-astitello#)
+[![Test](https://github.com/asticode/go-astitello/actions/workflows/test.yml/badge.svg)](https://github.com/asticode/go-astitello/actions/workflows/test.yml)
 [![Coveralls](https://coveralls.io/repos/github/asticode/go-astitello/badge.svg?branch=master)](https://coveralls.io/github/asticode/go-astitello)
 
 This is a Golang implementation of the DJI Tello SDK.
